@@ -1,11 +1,13 @@
 from fastapi import FastAPI
 
 from app.config import load_settings
+from app.health import router as health_router
 
 
 settings = load_settings()
 
 app = FastAPI(title="API Monitoring Platform Backend")
+app.include_router(health_router)
 
 
 @app.get("/")
