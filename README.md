@@ -81,6 +81,12 @@ Health URLs:
 - Backend live check: `http://localhost:8000/health/live`
 - Frontend health check: `http://localhost:3000/health`
 
+## Frontend dependency workflow
+
+Use npm for `apps/web`. Commit `package.json` and `package-lock.json` together, and regenerate the lockfile with npm instead of editing it manually. Before changing dependencies, update the feature branch from `main` and avoid unrelated package installations.
+
+From `apps/web`, use `npm ci` for a clean install. Use `npm install <package>` only when intentionally changing dependencies, then commit both package files.
+
 ## Migration commands
 
 Not applicable in the current repository: no migration tooling or commands are present.
