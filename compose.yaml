@@ -1,103 +1,140 @@
 services:
   db:
     image: postgres:16.4-alpine
+    restart: unless-stopped
     environment:
-      POSTGRES_DB: ${DATABASE_NAME}
-      POSTGRES_USER: ${DATABASE_USER}
-      POSTGRES_PASSWORD: ${DATABASE_PASSWORD}
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
+      POSTGRES_DB: ${DATABASE_NAME:-api_monitoring}
+      POSTGRES_USER: ${DATABASE_USER:-postgres}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:-change-me}
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USER} -d ${DATABASE_NAME}"]
+      test:
+        - CMD-SHELL
+        - pg_isready -U ${DATABASE_USER:-postgres} -d ${DATABASE_NAME:-api_monitoring}
       interval: 5s
       timeout: 5s
       retries: 12
       start_period: 5s
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
 
   redis:
     image: redis:7.4-alpine
+    restart: unless-stopped
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test:
+        - CMD
+        - redis-cli
+        - ping
       interval: 5s
       timeout: 3s
       retries: 12
       start_period: 3s
 
   backend:
-    build: ./apps/backend
-    env_file: ./apps/backend/.env
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-    volumes:
-      - ./apps/backend:/app
-    ports:
-      - "${BACKEND_PORT:-8000}:8000"
+    build:
+      context: ./apps/backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
+    env_file:
+      - ./apps/backend/.env
+    ports:
+      - ${BACKEND_PORT:-8000}:8000
+    volumes:
+      - ./apps/backend:/app
+    command:
+      - uvicorn
+      - app.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --reload
     healthcheck:
       test:
-        [
-          "CMD",
-          "python",
-          "-c",
-          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=2).read()",
-        ]
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=2).read()
       interval: 10s
       timeout: 3s
       retries: 5
       start_period: 5s
 
   frontend:
-    build: ./apps/web
-    env_file: ./apps/web/.env.local
-    command: npm run dev -- -H 0.0.0.0 -p 3000
-    volumes:
-      - ./apps/web:/app
-      - frontend_node_modules:/app/node_modules
-    ports:
-      - "${FRONTEND_PORT:-3000}:3000"
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile
+    restart: unless-stopped
     depends_on:
       backend:
         condition: service_healthy
+    env_file:
+      - ./apps/web/.env.local
+    ports:
+      - ${FRONTEND_PORT:-3000}:3000
+    volumes:
+      - ./apps/web:/app
+      - frontend_node_modules:/app/node_modules
     healthcheck:
       test:
-        [
-          "CMD",
-          "node",
-          "-e",
-          "fetch('http://127.0.0.1:3000/health',{signal:AbortSignal.timeout(2000)}).then(response=>{if(!response.ok)process.exit(1)}).catch(()=>process.exit(1))",
-        ]
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:3000/health',{signal:AbortSignal.timeout(2000)}).then(response=>{if(!response.ok)process.exit(1)}).catch(()=>process.exit(1))
       interval: 10s
       timeout: 3s
       retries: 5
       start_period: 5s
 
   worker:
-    build: ./apps/backend
-    env_file: ./apps/backend/.env
-    command: celery -A app.celery_app:celery_app worker --loglevel=info
-    volumes:
-      - ./apps/backend:/app
+    build:
+      context: ./apps/backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
+    env_file:
+      - ./apps/backend/.env
+    volumes:
+      - ./apps/backend:/app
+    command:
+      - celery
+      - -A
+      - app.celery_app:celery_app
+      - worker
+      - --loglevel=info
 
   scheduler:
-    build: ./apps/backend
-    env_file: ./apps/backend/.env
-    command: celery -A app.celery_app:celery_app beat --loglevel=info --schedule /tmp/celery/celerybeat-schedule
+    build:
+      context: ./apps/backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - ./apps/backend/.env
     volumes:
       - ./apps/backend:/app
       - scheduler_data:/tmp/celery
-    depends_on:
-      db:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
+    command:
+      - celery
+      - -A
+      - app.celery_app:celery_app
+      - beat
+      - --loglevel=info
+      - --schedule
+      - /tmp/celery/celerybeat-schedule
 
 volumes:
   postgres_data:

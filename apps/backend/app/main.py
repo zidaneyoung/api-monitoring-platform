@@ -11,7 +11,7 @@ app.include_router(health_router)
 
 
 @app.get("/")
-async def read_root() -> dict[str, object]:
+def read_root() -> dict[str, object]:
     return {
         "service": "backend",
         "environment": settings.environment,

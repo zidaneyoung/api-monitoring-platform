@@ -24,7 +24,7 @@ def load_settings() -> Settings:
     database_port = int(os.getenv("DATABASE_PORT", "5432"))
     database_name = os.getenv("DATABASE_NAME", "api_monitoring")
     database_user = os.getenv("DATABASE_USER", "postgres")
-    database_password = os.getenv("DATABASE_PASSWORD", "postgres")
+    database_password = os.getenv("DATABASE_PASSWORD", "change-me")
     redis_host = os.getenv("REDIS_HOST", "redis")
     redis_port = int(os.getenv("REDIS_PORT", "6379"))
     redis_db = int(os.getenv("REDIS_DB", "0"))

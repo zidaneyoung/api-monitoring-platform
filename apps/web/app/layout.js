@@ -1,6 +1,6 @@
 export const metadata = {
   title: "API Monitoring Platform",
-  description: "Monitor APIs and websites",
+  description: "Local development frontend scaffold",
 };
 
 export default function RootLayout({ children }) {
