@@ -30,6 +30,7 @@ htmlcov/
 .cache/
 .turbo/
 .parcel-cache/
+graphify-out/
 
 # IDE and operating system files
 .vscode/
