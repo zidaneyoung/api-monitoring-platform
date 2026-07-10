@@ -32,6 +32,9 @@ htmlcov/
 .parcel-cache/
 graphify-out/
 
+# Graphify generated knowledge-graph artifacts
+graphify-out/
+
 # IDE and operating system files
 .vscode/
 .idea/
