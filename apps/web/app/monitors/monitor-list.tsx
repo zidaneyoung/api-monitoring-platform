@@ -12,7 +12,7 @@ import {
 } from "lucide-react"
 import { useState } from "react"
 
-import { StatusBadge, type MonitorStatus } from "@/components/status-badge"
+import { StatusBadge } from "@/components/status-badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import {
@@ -27,44 +27,9 @@ import {
 } from "@/components/ui/dialog"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { cn } from "@/lib/utils"
-
-type Monitor = {
-  id: string
-  name: string
-  url: string
-  status: MonitorStatus
-  lastCheck: string
-  responseTime: string
-}
+import { mockMonitors, type Monitor } from "./monitor-data"
 
 export type MonitorViewState = "list" | "empty" | "error"
-
-const mockMonitors: Monitor[] = [
-  {
-    id: "public-api",
-    name: "Public API",
-    url: "https://api.example.com/health",
-    status: "up",
-    lastCheck: "2 minutes ago",
-    responseTime: "184 ms",
-  },
-  {
-    id: "checkout",
-    name: "Checkout",
-    url: "https://example.com/checkout",
-    status: "down",
-    lastCheck: "1 minute ago",
-    responseTime: "1,204 ms",
-  },
-  {
-    id: "staging",
-    name: "Staging",
-    url: "https://staging.example.com",
-    status: "paused",
-    lastCheck: "Paused 3 days ago",
-    responseTime: "—",
-  },
-]
 
 function MonitorActions({ monitor, onToggleStatus }: { monitor: Monitor; onToggleStatus: (id: string) => void }) {
   const isPaused = monitor.status === "paused"
