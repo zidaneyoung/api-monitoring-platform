@@ -149,7 +149,7 @@ function ErrorState({ title, description }: { title: string; description: string
             <h1>{title}</h1>
             <p className="mt-1 text-muted-foreground">{description}</p>
           </div>
-          <Button variant="outline" render={<Link href="/monitors" />}>
+          <Button variant="outline" render={<Link href="/monitors/incidents" />}>
             <ArrowLeftIcon data-icon="inline-start" />
             Back to incident history
           </Button>
@@ -195,7 +195,7 @@ export default async function IncidentDetailsPage({ params, searchParams }: Page
   return (
     <main className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-8 sm:px-6 lg:px-8">
       <div>
-        <Button variant="outline" size="sm" render={<Link href="/monitors" />}>
+        <Button variant="outline" size="sm" render={<Link href="/monitors/incidents" />}>
           <ArrowLeftIcon data-icon="inline-start" />
           Back to incident history
         </Button>
@@ -234,7 +234,13 @@ export default async function IncidentDetailsPage({ params, searchParams }: Page
           <CardContent>
             <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
               <div>
-                <div className="text-lg font-semibold">{monitor?.name ?? incident.monitorName}</div>
+                {monitor ? (
+                  <Link className="text-lg font-semibold hover:underline" href={`/monitors/${monitor.id}`}>
+                    {monitor.name}
+                  </Link>
+                ) : (
+                  <div className="text-lg font-semibold">{incident.monitorName}</div>
+                )}
                 <div className="mt-1 text-sm text-muted-foreground">Incident source: {incident.monitorName}</div>
               </div>
               {monitor ? <StatusBadge status={monitor.status} /> : null}

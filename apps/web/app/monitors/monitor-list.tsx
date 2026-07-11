@@ -166,7 +166,9 @@ export function MonitorList({ viewState }: { viewState: MonitorViewState }) {
                       className={cn(monitor.status === "paused" && "border-l-4 border-l-status-paused bg-status-paused/10")}
                     >
                       <TableCell>
-                        <div className="font-medium">{monitor.name}</div>
+                        <Link className="font-medium hover:underline" href={`/monitors/${monitor.id}`}>
+                          {monitor.name}
+                        </Link>
                         <div className="max-w-xs truncate text-muted-foreground" title={monitor.url}>{monitor.url}</div>
                       </TableCell>
                       <TableCell><StatusBadge status={monitor.status} /></TableCell>
@@ -189,7 +191,11 @@ export function MonitorList({ viewState }: { viewState: MonitorViewState }) {
                 <CardHeader>
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <CardTitle>{monitor.name}</CardTitle>
+                      <CardTitle>
+                        <Link className="hover:underline" href={`/monitors/${monitor.id}`}>
+                          {monitor.name}
+                        </Link>
+                      </CardTitle>
                       <CardDescription className="mt-1 break-all">{monitor.url}</CardDescription>
                     </div>
                     <StatusBadge status={monitor.status} />

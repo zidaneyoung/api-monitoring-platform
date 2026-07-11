@@ -2,6 +2,13 @@
 
 Local setup for the API Monitoring Platform.
 
+## Repository structure
+
+- `apps/web`: Next.js frontend application.
+- `apps/backend`: FastAPI backend, Celery worker, and scheduler application.
+- `infrastructure`: Docker, deployment, monitoring, and infrastructure configuration.
+- `docs`: Product requirements, architecture decisions, and technical documentation.
+
 ## Required software
 
 - Git 2.x
