@@ -7,7 +7,6 @@ import {
   CirclePauseIcon,
   CircleXIcon,
   GaugeIcon,
-  InboxIcon,
   LayoutDashboardIcon,
   MonitorIcon,
   PlusIcon,
@@ -17,6 +16,7 @@ import {
 
 import { getIncidents } from "@/app/monitors/incidents-data"
 import { mockMonitors, type Monitor } from "@/app/monitors/monitor-data"
+import { EmptyState, ErrorState, LoadingState } from "@/components/states"
 import { StatusBadge, type MonitorStatus } from "@/components/status-badge"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { Button } from "@/components/ui/button"
@@ -222,39 +222,6 @@ function ResponseTimeOverview() {
   )
 }
 
-function LoadingState() {
-  return (
-    <div className="grid gap-6">
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">{Array.from({ length: 5 }).map((_, index) => <Card key={index} className="h-28 animate-pulse bg-muted" />)}</div>
-      <div className="grid gap-6 xl:grid-cols-2">{Array.from({ length: 2 }).map((_, index) => <Card key={index} className="h-80 animate-pulse bg-muted" />)}</div>
-    </div>
-  )
-}
-
-function EmptyState() {
-  return (
-    <Card className="items-center py-14 text-center">
-      <CardContent className="flex max-w-md flex-col items-center gap-3">
-        <InboxIcon className="size-10 text-muted-foreground" aria-hidden="true" />
-        <div><h2>No monitor data yet</h2><p className="mt-1 text-muted-foreground">Create a monitor to begin tracking availability and response time.</p></div>
-        <Button nativeButton={false} render={<Link href="/monitors/new" />}><PlusIcon data-icon="inline-start" />Create monitor</Button>
-      </CardContent>
-    </Card>
-  )
-}
-
-function ErrorState() {
-  return (
-    <Card className="items-center border-destructive/40 py-14 text-center">
-      <CardContent className="flex max-w-md flex-col items-center gap-3">
-        <AlertTriangleIcon className="size-10 text-destructive" aria-hidden="true" />
-        <div><h2>Unable to display dashboard</h2><p className="mt-1 text-muted-foreground">Mock dashboard data could not be prepared. Try again.</p></div>
-        <Button nativeButton={false} variant="outline" render={<Link href="/dashboard" />}>Try again</Button>
-      </CardContent>
-    </Card>
-  )
-}
-
 function DashboardReady() {
   return (
     <div className="grid gap-6">
@@ -283,9 +250,9 @@ export default async function DashboardPage({ searchParams }: PageProps) {
             </div>
             <Button nativeButton={false} className="w-full sm:w-auto" render={<Link href="/monitors/new" />}><PlusIcon data-icon="inline-start" />Create monitor</Button>
           </header>
-          {requestedState === "loading" ? <LoadingState /> : null}
-          {requestedState === "empty" ? <EmptyState /> : null}
-          {requestedState === "error" ? <ErrorState /> : null}
+          {requestedState === "loading" ? <LoadingState label="Loading dashboard" count={5} className="sm:grid-cols-2 xl:grid-cols-5" /> : null}
+          {requestedState === "empty" ? <EmptyState title="No monitor data yet" description="No availability data exists because no monitor checks have completed. Create a monitor to begin tracking availability and response time." icon={<ActivityIcon className="size-7" />} action={<Button nativeButton={false} render={<Link href="/monitors/new" />}><PlusIcon data-icon="inline-start" />Create monitor</Button>} /> : null}
+          {requestedState === "error" ? <ErrorState title="Unable to load dashboard" description="Dashboard monitoring data could not be loaded. Retry the request." action={<Button nativeButton={false} variant="outline" render={<Link href="/dashboard" />}>Try again</Button>} /> : null}
           {requestedState === "ready" ? <DashboardReady /> : null}
         </div>
       </main>

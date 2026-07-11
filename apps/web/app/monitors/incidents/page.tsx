@@ -21,7 +21,6 @@ import type { IncidentRecord } from "../incidents-data"
 type PageProps = {
   searchParams: Promise<{ state?: string }>
 }
-
 const timeFormatter = new Intl.DateTimeFormat("en-US", {
   dateStyle: "medium",
   timeStyle: "short",
@@ -253,4 +252,3 @@ export default async function MonitorsPage({ searchParams }: PageProps) {
     </main>
   )
 }
-

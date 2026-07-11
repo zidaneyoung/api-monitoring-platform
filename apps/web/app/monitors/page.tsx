@@ -7,7 +7,7 @@ export default async function MonitorsPage({
 }) {
   const requestedView = (await searchParams).state
   const viewState: MonitorViewState =
-    requestedView === "empty" || requestedView === "error" ? requestedView : "list"
+    requestedView === "loading" || requestedView === "empty" || requestedView === "error" ? requestedView : "list"
 
   return <MonitorList viewState={viewState} />
 }

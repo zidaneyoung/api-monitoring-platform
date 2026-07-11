@@ -1,6 +1,5 @@
 import Link from "next/link"
 import {
-  AlertTriangleIcon,
   ArrowLeftIcon,
   Clock3Icon,
   MapPinIcon,
@@ -9,6 +8,7 @@ import {
 } from "lucide-react"
 import type { ReactNode } from "react"
 
+import { EmptyState, ErrorState, LoadingState } from "@/components/states"
 import { StatusBadge } from "@/components/status-badge"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -107,72 +107,17 @@ function DetailItem({ label, value, icon }: { label: string; value: ReactNode; i
   )
 }
 
-function LoadingState() {
-  return (
-    <main className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-8 sm:px-6 lg:px-8">
-      <div className="h-8 w-40 rounded-md bg-muted" />
-      <Card>
-        <CardHeader>
-          <div className="h-5 w-44 rounded-md bg-muted" />
-          <div className="h-8 w-3/4 rounded-md bg-muted" />
-          <div className="h-4 w-full max-w-2xl rounded-md bg-muted" />
-        </CardHeader>
-        <CardContent className="grid gap-4 md:grid-cols-4">
-          {Array.from({ length: 4 }).map((_, index) => (
-            <div key={index} className="h-20 rounded-lg bg-muted" />
-          ))}
-        </CardContent>
-      </Card>
-      <div className="grid gap-6 lg:grid-cols-2">
-        <Card>
-          <CardContent>
-            <div className="h-56 rounded-lg bg-muted" />
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent>
-            <div className="h-56 rounded-lg bg-muted" />
-          </CardContent>
-        </Card>
-      </div>
-    </main>
-  )
-}
-
-function ErrorState({ title, description }: { title: string; description: string }) {
-  return (
-    <main className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-8 sm:px-6 lg:px-8">
-      <Card className="border-destructive/40 py-12 text-center">
-        <CardContent className="flex flex-col items-center gap-3">
-          <AlertTriangleIcon className="size-10 text-destructive" aria-hidden="true" />
-          <div>
-            <h1>{title}</h1>
-            <p className="mt-1 text-muted-foreground">{description}</p>
-          </div>
-          <Button variant="outline" render={<Link href="/monitors/incidents" />}>
-            <ArrowLeftIcon data-icon="inline-start" />
-            Back to incident history
-          </Button>
-        </CardContent>
-      </Card>
-    </main>
-  )
-}
-
 export default async function IncidentDetailsPage({ params, searchParams }: PageProps) {
   const [{ incidentId }, requestedSearchParams] = await Promise.all([params, searchParams])
   const requestedState = normalizeState(requestedSearchParams.state)
 
   if (requestedState === "loading") {
-    return <LoadingState />
+    return <main className="mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 lg:px-8"><LoadingState label="Loading incident details" count={3} /></main>
   }
 
   if (requestedState === "error") {
     return (
-      <ErrorState
-        title="Unable to display incident"
-        description="Something went wrong while preparing this mock incident detail view. Try again."
-      />
+      <main className="mx-auto w-full max-w-3xl px-4 py-8 sm:px-6 lg:px-8"><ErrorState title="Unable to load incident" description="Incident details could not be loaded. Retry the request." action={<Button variant="outline" nativeButton={false} render={<Link href={`/monitors/incidents/${incidentId}`} />}>Try again</Button>} /></main>
     )
   }
 
@@ -180,10 +125,7 @@ export default async function IncidentDetailsPage({ params, searchParams }: Page
 
   if (!incident) {
     return (
-      <ErrorState
-        title="Incident not found"
-        description="The requested mock incident does not exist in this dataset."
-      />
+      <main className="mx-auto w-full max-w-3xl px-4 py-8 sm:px-6 lg:px-8"><EmptyState title="Incident not found" description="No incident matches this link. It may have been removed or the address may be incorrect." action={<Button variant="outline" nativeButton={false} render={<Link href="/monitors/incidents" />}><ArrowLeftIcon data-icon="inline-start" />Back to incident history</Button>} /></main>
     )
   }
 
@@ -195,7 +137,7 @@ export default async function IncidentDetailsPage({ params, searchParams }: Page
   return (
     <main className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-8 sm:px-6 lg:px-8">
       <div>
-        <Button variant="outline" size="sm" render={<Link href="/monitors/incidents" />}>
+        <Button variant="outline" size="sm" nativeButton={false} render={<Link href="/monitors/incidents" />}>
           <ArrowLeftIcon data-icon="inline-start" />
           Back to incident history
         </Button>

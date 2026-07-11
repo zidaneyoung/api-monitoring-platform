@@ -2,8 +2,6 @@
 
 import Link from "next/link"
 import {
-  AlertTriangleIcon,
-  InboxIcon,
   PauseIcon,
   PencilIcon,
   PlayIcon,
@@ -12,6 +10,7 @@ import {
 } from "lucide-react"
 import { useState } from "react"
 
+import { EmptyState, ErrorState, LoadingState } from "@/components/states"
 import { StatusBadge } from "@/components/status-badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
@@ -29,7 +28,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { cn } from "@/lib/utils"
 import { mockMonitors, type Monitor } from "./monitor-data"
 
-export type MonitorViewState = "list" | "empty" | "error"
+export type MonitorViewState = "list" | "loading" | "empty" | "error"
 
 function MonitorActions({ monitor, onToggleStatus }: { monitor: Monitor; onToggleStatus: (id: string) => void }) {
   const isPaused = monitor.status === "paused"
@@ -80,39 +79,6 @@ function MonitorActions({ monitor, onToggleStatus }: { monitor: Monitor; onToggl
   )
 }
 
-function EmptyState() {
-  return (
-    <Card className="items-center py-12 text-center">
-      <CardContent className="flex max-w-md flex-col items-center gap-3">
-        <InboxIcon className="size-10 text-muted-foreground" aria-hidden="true" />
-        <div>
-          <h2>No monitors yet</h2>
-          <p className="mt-1 text-muted-foreground">Create your first monitor to start tracking an endpoint.</p>
-        </div>
-        <Button render={<Link href="/monitors/new" />}>
-          <PlusIcon data-icon="inline-start" />
-          Create monitor
-        </Button>
-      </CardContent>
-    </Card>
-  )
-}
-
-function ErrorState() {
-  return (
-    <Card className="border-destructive/40 py-12 text-center">
-      <CardContent className="flex flex-col items-center gap-3">
-        <AlertTriangleIcon className="size-10 text-destructive" aria-hidden="true" />
-        <div>
-          <h2>Unable to display monitors</h2>
-          <p className="mt-1 text-muted-foreground">Something went wrong while preparing this view. Try again.</p>
-        </div>
-        <Button variant="outline" type="button">Try again</Button>
-      </CardContent>
-    </Card>
-  )
-}
-
 export function MonitorList({ viewState }: { viewState: MonitorViewState }) {
   const [monitors, setMonitors] = useState<Monitor[]>(mockMonitors)
 
@@ -133,14 +99,15 @@ export function MonitorList({ viewState }: { viewState: MonitorViewState }) {
           <h1>Monitors</h1>
           <p className="mt-1 text-muted-foreground">Track availability and response times for your endpoints.</p>
         </div>
-        <Button render={<Link href="/monitors/new" />} className="w-full sm:w-auto">
+        <Button nativeButton={false} render={<Link href="/monitors/new" />} className="w-full sm:w-auto">
           <PlusIcon data-icon="inline-start" />
           Create monitor
         </Button>
       </header>
 
-      {viewState === "empty" ? <EmptyState /> : null}
-      {viewState === "error" ? <ErrorState /> : null}
+      {viewState === "loading" ? <LoadingState label="Loading monitors" count={3} /> : null}
+      {viewState === "empty" ? <EmptyState title="No monitors yet" description="No endpoints are being checked. Create your first monitor to start tracking availability." action={<Button nativeButton={false} render={<Link href="/monitors/new" />}><PlusIcon data-icon="inline-start" />Create monitor</Button>} /> : null}
+      {viewState === "error" ? <ErrorState title="Unable to load monitors" description="Monitor data could not be loaded. Retry the request." action={<Button variant="outline" type="button" onClick={() => window.location.reload()}>Try again</Button>} /> : null}
       {viewState === "list" ? (
         <>
           <Card className="hidden md:flex">
