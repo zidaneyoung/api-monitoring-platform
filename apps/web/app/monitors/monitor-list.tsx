@@ -11,7 +11,7 @@ import {
 import { useState } from "react"
 
 import { EmptyState, ErrorState, LoadingState } from "@/components/states"
-import { StatusBadge, type MonitorStatus } from "@/components/status-badge"
+import { StatusBadge } from "@/components/status-badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import {
@@ -26,44 +26,9 @@ import {
 } from "@/components/ui/dialog"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { cn } from "@/lib/utils"
-
-type Monitor = {
-  id: string
-  name: string
-  url: string
-  status: MonitorStatus
-  lastCheck: string
-  responseTime: string
-}
+import { mockMonitors, type Monitor } from "./monitor-data"
 
 export type MonitorViewState = "list" | "loading" | "empty" | "error"
-
-const mockMonitors: Monitor[] = [
-  {
-    id: "public-api",
-    name: "Public API",
-    url: "https://api.example.com/health",
-    status: "up",
-    lastCheck: "2 minutes ago",
-    responseTime: "184 ms",
-  },
-  {
-    id: "checkout",
-    name: "Checkout",
-    url: "https://example.com/checkout",
-    status: "down",
-    lastCheck: "1 minute ago",
-    responseTime: "1,204 ms",
-  },
-  {
-    id: "staging",
-    name: "Staging",
-    url: "https://staging.example.com",
-    status: "paused",
-    lastCheck: "Paused 3 days ago",
-    responseTime: "—",
-  },
-]
 
 function MonitorActions({ monitor, onToggleStatus }: { monitor: Monitor; onToggleStatus: (id: string) => void }) {
   const isPaused = monitor.status === "paused"
@@ -168,7 +133,9 @@ export function MonitorList({ viewState }: { viewState: MonitorViewState }) {
                       className={cn(monitor.status === "paused" && "border-l-4 border-l-status-paused bg-status-paused/10")}
                     >
                       <TableCell>
-                        <div className="font-medium">{monitor.name}</div>
+                        <Link className="font-medium hover:underline" href={`/monitors/${monitor.id}`}>
+                          {monitor.name}
+                        </Link>
                         <div className="max-w-xs truncate text-muted-foreground" title={monitor.url}>{monitor.url}</div>
                       </TableCell>
                       <TableCell><StatusBadge status={monitor.status} /></TableCell>
@@ -191,7 +158,11 @@ export function MonitorList({ viewState }: { viewState: MonitorViewState }) {
                 <CardHeader>
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <CardTitle>{monitor.name}</CardTitle>
+                      <CardTitle>
+                        <Link className="hover:underline" href={`/monitors/${monitor.id}`}>
+                          {monitor.name}
+                        </Link>
+                      </CardTitle>
                       <CardDescription className="mt-1 break-all">{monitor.url}</CardDescription>
                     </div>
                     <StatusBadge status={monitor.status} />
