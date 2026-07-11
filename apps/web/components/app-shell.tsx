@@ -30,7 +30,7 @@ export function AppNavigation() {
   const pathname = usePathname()
   const isAuthenticationPage = pathname === "/login" || pathname === "/register"
 
-  if (isAuthenticationPage) {
+  if (isAuthenticationPage || pathname === "/dashboard") {
     return null
   }
 
