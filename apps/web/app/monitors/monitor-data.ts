@@ -6,6 +6,7 @@ export type Monitor = {
   url: string
   status: MonitorStatus
   lastCheck: string
+  lastCheckTime: string
   responseTime: string
 }
 
@@ -16,6 +17,7 @@ export const mockMonitors: Monitor[] = [
     url: "https://api.example.com/health",
     status: "up",
     lastCheck: "2 minutes ago",
+    lastCheckTime: "2:15 PM",
     responseTime: "184 ms",
   },
   {
@@ -24,6 +26,7 @@ export const mockMonitors: Monitor[] = [
     url: "https://example.com/checkout",
     status: "down",
     lastCheck: "1 minute ago",
+    lastCheckTime: "2:16 PM",
     responseTime: "1,204 ms",
   },
   {
@@ -32,6 +35,7 @@ export const mockMonitors: Monitor[] = [
     url: "https://staging.example.com",
     status: "paused",
     lastCheck: "Paused 3 days ago",
+    lastCheckTime: "May 30, 2:15 PM",
     responseTime: "-",
   },
 ]
