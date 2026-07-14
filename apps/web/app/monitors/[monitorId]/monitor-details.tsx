@@ -3,6 +3,7 @@
 import Link from "next/link"
 import {
   ArrowLeftIcon,
+  ArrowRightIcon,
   Clock3Icon,
   PauseIcon,
   PencilIcon,
@@ -13,15 +14,8 @@ import { useState } from "react"
 
 import { StatusBadge, type MonitorStatus } from "@/components/status-badge"
 import { Badge } from "@/components/ui/badge"
-import { Button, buttonVariants } from "@/components/ui/button"
-import {
-  Card,
-  CardAction,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import {
   Dialog,
   DialogClose,
@@ -59,7 +53,7 @@ const configuration = [
   ["Method", "GET"],
   ["Interval", "5 minutes"],
   ["Timeout", "10 seconds"],
-  ["Status range", "200-299"],
+  ["Status range", "200–299"],
   ["Response threshold", "800 ms"],
   ["Uptime threshold", "99.9%"],
 ] as const
@@ -67,9 +61,9 @@ const configuration = [
 const baseChecks: RecentCheck[] = [
   { id: "chk-1015", checkedAt: "2:15 PM", status: "success", responseTime: "184 ms", statusCode: "200", location: "us-east-1" },
   { id: "chk-1014", checkedAt: "2:10 PM", status: "success", responseTime: "176 ms", statusCode: "200", location: "us-east-1" },
-  { id: "chk-1013", checkedAt: "2:05 PM", status: "success", responseTime: "192 ms", statusCode: "200", location: "eu-west-1" },
+  { id: "chk-1013", checkedAt: "2:05 PM", status: "success", responseTime: "192 ms", statusCode: "200", location: "us-west-1" },
   { id: "chk-1012", checkedAt: "2:00 PM", status: "success", responseTime: "211 ms", statusCode: "200", location: "us-west-2" },
-  { id: "chk-1011", checkedAt: "1:55 PM", status: "success", responseTime: "189 ms", statusCode: "200", location: "us-east-1" },
+  { id: "chk-1011", checkedAt: "1:55 PM", status: "success", responseTime: "169 ms", statusCode: "200", location: "us-east-1" },
 ]
 
 function checksForMonitor(monitor: Monitor): RecentCheck[] {
@@ -90,109 +84,79 @@ function checksForMonitor(monitor: Monitor): RecentCheck[] {
   return baseChecks
 }
 
-function statusCopy(status: MonitorStatus) {
-  if (status === "down") return "Latest check failed"
-  if (status === "paused") return "Scheduled checks are paused"
-  return "Latest check completed successfully"
-}
-
 function CheckBadge({ status }: { status: RecentCheck["status"] }) {
-  if (status === "failed") {
-    return <Badge variant="destructive">Failed</Badge>
-  }
-
-  if (status === "paused") {
-    return <Badge className="bg-status-paused text-status-paused-foreground">Paused</Badge>
-  }
-
-  return <Badge className="bg-status-up text-status-up-foreground">Success</Badge>
+  if (status === "failed") return <Badge variant="destructive">Failed</Badge>
+  if (status === "paused") return <Badge variant="outline" className="border-status-paused-foreground/35 bg-status-paused text-status-paused-foreground">Paused</Badge>
+  return <Badge variant="outline" className="border-status-up-foreground/35 bg-status-up text-status-up-foreground">Success</Badge>
 }
 
 function ResponseChart({ isDown }: { isDown: boolean }) {
   const points = isDown
-    ? "0,178 56,166 112,171 168,152 224,160 280,148 336,153 392,142 448,149 504,134 560,140 616,126 672,132 728,42 800,54"
-    : "0,178 56,166 112,171 168,152 224,160 280,148 336,153 392,142 448,149 504,134 560,140 616,126 672,132 728,119 800,128"
+    ? "0,164 55,152 110,157 165,142 220,149 275,136 330,143 385,130 440,137 495,120 550,127 605,112 660,119 715,40 800,52"
+    : "0,164 55,152 110,157 165,142 220,149 275,136 330,143 385,130 440,137 495,120 550,127 605,112 660,119 715,104 800,114"
 
   return (
-    <div
-      className="overflow-hidden rounded-lg border bg-muted/20 p-3 sm:p-4"
-      role="img"
-      aria-label="Response time chart placeholder for the latest two hours"
-    >
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-        <span>0 ms</span>
-        <span>Threshold: 800 ms</span>
-      </div>
-      <svg className="h-56 w-full min-w-0" viewBox="0 0 800 220" preserveAspectRatio="none" aria-hidden="true">
-        <line className="stroke-border" x1="0" x2="800" y1="40" y2="40" />
-        <line className="stroke-border" x1="0" x2="800" y1="100" y2="100" />
-        <line className="stroke-border" x1="0" x2="800" y1="160" y2="160" />
-        <line className="stroke-status-down-foreground" strokeDasharray="7 7" x1="0" x2="800" y1="72" y2="72" />
-        <polyline
-          className="fill-none stroke-primary"
-          points={points}
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth="3"
-          vectorEffect="non-scaling-stroke"
-        />
+    <div className="relative overflow-hidden rounded-xl border bg-background/25 px-4 pt-3 pb-3" role="img" aria-label="Response time chart placeholder for the latest two hours with an 800 millisecond threshold">
+      <div className="flex justify-end text-xs text-muted-foreground">Threshold: 800 ms</div>
+      <svg className="mt-1 h-36 w-full sm:h-40 xl:h-44" viewBox="0 0 800 190" preserveAspectRatio="none" aria-hidden="true">
+        <line className="stroke-status-down-foreground" strokeDasharray="7 6" x1="0" x2="800" y1="60" y2="60" strokeWidth="1.5" />
+        <polyline className="fill-none stroke-chart-line" points={points} strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.25" vectorEffect="non-scaling-stroke" />
       </svg>
-      <div className="mt-2 flex justify-between text-xs text-muted-foreground">
-        <span>12:00</span><span>12:30</span><span>1:00</span><span>1:30</span><span>2:00</span>
+      <div className="-mt-2 flex justify-between text-[11px] text-muted-foreground sm:text-xs">
+        <span>0 ms</span><span>12:30</span><span>1:00</span><span>1:30</span><span>2:00</span>
       </div>
     </div>
   )
 }
 
-export function MonitorDetails({
-  monitor,
-  incidents,
-}: {
-  monitor: Monitor
-  incidents: MonitorIncidentSummary[]
-}) {
+function SummaryCard({ label, value, valueClassName }: { label: string; value: React.ReactNode; valueClassName?: string }) {
+  return (
+    <Card className="min-h-28 gap-0 py-0 sm:min-h-32">
+      <CardContent className="flex h-full min-h-28 flex-col items-center justify-center px-4 py-5 text-center sm:min-h-32">
+        <dt className="text-sm font-medium text-muted-foreground">{label}</dt>
+        <dd className={cn("mt-3 truncate text-[1.75rem] font-semibold tracking-[-0.03em]", valueClassName)}>{value}</dd>
+      </CardContent>
+    </Card>
+  )
+}
+
+function incidentTone(incident: MonitorIncidentSummary) {
+  if (incident.resolved) return "border-status-up-foreground/35 bg-status-up text-status-up-foreground"
+  if (incident.status.toLowerCase().includes("mitigat")) return "border-status-paused-foreground/35 bg-status-paused text-status-paused-foreground"
+  return "border-status-down-foreground/35 bg-status-down text-status-down-foreground"
+}
+
+export function MonitorDetails({ monitor, incidents }: { monitor: Monitor; incidents: MonitorIncidentSummary[] }) {
   const [status, setStatus] = useState<MonitorStatus>(monitor.status)
   const isPaused = status === "paused"
   const checks = checksForMonitor({ ...monitor, status })
   const latestCheck = checks[0]
+  const statusLabel = status === "up" ? "Up" : status === "down" ? "Down" : "Paused"
 
   return (
-    <main className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-8 sm:px-6 lg:px-8">
-      <div>
-        <Link className={buttonVariants({ variant: "outline", size: "sm" })} href="/monitors">
-          <ArrowLeftIcon data-icon="inline-start" />
-          Back to monitors
-        </Link>
-      </div>
+    <main className="mx-auto flex w-full max-w-[94rem] flex-col gap-4 px-4 py-6 sm:px-6 lg:px-8 xl:px-11 xl:py-7">
+      <Link className="inline-flex w-fit items-center gap-2 text-sm font-medium text-foreground transition-colors hover:text-link focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50" href="/monitors">
+        <ArrowLeftIcon className="size-4" aria-hidden="true" />
+        Back to monitors
+      </Link>
 
-      <header className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+      <header className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
         <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-3">
-            <h1>{monitor.name}</h1>
-            <StatusBadge status={status} />
+          <div className="flex flex-wrap items-center gap-4">
+            <h1 className="text-[2.25rem] font-semibold tracking-[-0.045em] sm:text-[2.45rem]">{monitor.name}</h1>
+            <StatusBadge status={status} className="px-3 py-1 text-base" />
           </div>
-          <a className="mt-2 block break-all text-sm text-primary hover:underline" href={monitor.url}>
-            {monitor.url}
-          </a>
+          <a className="mt-1 block break-all text-base font-semibold text-link hover:underline" href={monitor.url}>{monitor.url}</a>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Button variant="outline" size="sm" type="button">
-            <PencilIcon data-icon="inline-start" />
-            Edit
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            type="button"
-            onClick={() => setStatus((current) => current === "paused" ? "up" : "paused")}
-          >
+        <div className="flex flex-wrap items-center gap-3">
+          <Button className="h-10 px-4" variant="outline" size="lg" type="button"><PencilIcon data-icon="inline-start" />Edit</Button>
+          <Button className="h-10 px-4" variant="outline" size="lg" type="button" onClick={() => setStatus((current) => current === "paused" ? "up" : "paused")}>
             {isPaused ? <PlayIcon data-icon="inline-start" /> : <PauseIcon data-icon="inline-start" />}
             {isPaused ? "Resume" : "Pause"}
           </Button>
           <Dialog>
-            <DialogTrigger render={<Button variant="destructive" size="sm" type="button" />}>
-              <Trash2Icon data-icon="inline-start" />
-              Delete
+            <DialogTrigger render={<Button className="h-10 px-4" variant="destructive" size="lg" type="button" />}>
+              <Trash2Icon data-icon="inline-start" />Delete
             </DialogTrigger>
             <DialogContent>
               <DialogHeader>
@@ -208,101 +172,95 @@ export function MonitorDetails({
         </div>
       </header>
 
-      <Card className={cn(
-        status === "up" && "border-l-4 border-l-status-up",
-        status === "down" && "border-l-4 border-l-status-down",
-        status === "paused" && "border-l-4 border-l-status-paused"
-      )}>
-        <CardHeader>
-          <CardTitle>Current status</CardTitle>
-          <CardDescription>{statusCopy(status)}</CardDescription>
-          <CardAction><StatusBadge status={status} /></CardAction>
-        </CardHeader>
-        <CardContent>
-          <dl className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <div><dt className="text-xs font-medium text-muted-foreground">Latest response time</dt><dd className="mt-1 text-2xl font-semibold">{latestCheck.responseTime}</dd></div>
-            <div><dt className="text-xs font-medium text-muted-foreground">Status code</dt><dd className="mt-1 text-2xl font-semibold">{latestCheck.statusCode}</dd></div>
-            <div><dt className="text-xs font-medium text-muted-foreground">Latest check</dt><dd className="mt-1 font-medium">{latestCheck.checkedAt}</dd></div>
-            <div><dt className="text-xs font-medium text-muted-foreground">Location</dt><dd className="mt-1 font-medium">{latestCheck.location}</dd></div>
-          </dl>
-        </CardContent>
-      </Card>
+      <dl className="mt-1 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        <SummaryCard
+          label="Current status"
+          value={statusLabel}
+          valueClassName={status === "up" ? "text-status-up-foreground" : status === "down" ? "text-status-down-foreground" : "text-status-paused-foreground"}
+        />
+        <SummaryCard label="Latest response time" value={latestCheck.responseTime} />
+        <SummaryCard label="Status code" value={latestCheck.statusCode} />
+        <SummaryCard label="Latest check" value={latestCheck.checkedAt} />
+        <SummaryCard label="Location" value={latestCheck.location} />
+      </dl>
 
-      <div className="grid min-w-0 gap-6 xl:grid-cols-[minmax(0,1.55fr)_minmax(20rem,0.85fr)]">
-        <div className="flex min-w-0 flex-col gap-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>Response time</CardTitle>
-              <CardDescription>Latest two hours. Chart visualization is a mock placeholder.</CardDescription>
-            </CardHeader>
-            <CardContent><ResponseChart isDown={status === "down"} /></CardContent>
-          </Card>
+      <div className="mt-1 grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1.7fr)_minmax(20rem,1fr)]">
+        <Card className="gap-0 py-0">
+          <CardHeader className="px-5 pt-5 pb-3 sm:px-6">
+            <CardTitle>Response time</CardTitle>
+            <CardDescription>Latest two hours. Chart visualization is a mock placeholder.</CardDescription>
+          </CardHeader>
+          <CardContent className="px-5 pb-5 sm:px-6"><ResponseChart isDown={status === "down"} /></CardContent>
+        </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Recent checks</CardTitle>
-              <CardDescription>Latest scheduled requests from mock monitor data.</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <Table>
-                <TableHeader><TableRow><TableHead>Time</TableHead><TableHead>Status</TableHead><TableHead>Response</TableHead><TableHead>Code</TableHead><TableHead>Location</TableHead></TableRow></TableHeader>
-                <TableBody>
-                  {checks.map((check) => (
-                    <TableRow key={check.id}>
-                      <TableCell>{check.checkedAt}</TableCell>
-                      <TableCell><CheckBadge status={check.status} /></TableCell>
-                      <TableCell>{check.responseTime}</TableCell>
-                      <TableCell>{check.statusCode}</TableCell>
-                      <TableCell>{check.location}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
-        </div>
+        <Card className="gap-0 py-0">
+          <CardHeader className="px-5 pt-5 pb-2 sm:px-6">
+            <CardTitle>Configuration</CardTitle>
+            <CardDescription>Monitor request and alert thresholds.</CardDescription>
+          </CardHeader>
+          <CardContent className="px-5 pb-2 sm:px-6">
+            <dl>
+              {configuration.map(([label, value]) => (
+                <div className="flex items-center justify-between gap-4 border-b py-2.5 last:border-b-0" key={label}>
+                  <dt className="text-sm text-muted-foreground">{label}</dt><dd className="text-right text-sm font-semibold">{value}</dd>
+                </div>
+              ))}
+            </dl>
+          </CardContent>
+        </Card>
 
-        <div className="flex min-w-0 flex-col gap-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>Configuration</CardTitle>
-              <CardDescription>Monitor request and alert thresholds.</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <dl className="grid gap-4">
-                {configuration.map(([label, value]) => (
-                  <div className="flex items-center justify-between gap-4 border-b pb-3 last:border-b-0 last:pb-0" key={label}>
-                    <dt className="text-muted-foreground">{label}</dt><dd className="text-right font-medium">{value}</dd>
-                  </div>
+        <Card id="recent-checks" className="min-w-0 gap-0 py-0">
+          <CardHeader className="px-5 pt-5 pb-2 sm:px-6">
+            <CardTitle>Recent checks</CardTitle>
+            <CardDescription>Latest scheduled requests from mock monitor data.</CardDescription>
+          </CardHeader>
+          <CardContent className="overflow-x-auto px-5 pb-5 sm:px-6">
+            <Table className="min-w-[620px]">
+              <TableHeader><TableRow className="hover:bg-transparent"><TableHead className="h-10 px-0 text-xs font-semibold text-foreground">Time</TableHead><TableHead className="h-10 px-3 text-xs font-semibold text-foreground">Status</TableHead><TableHead className="h-10 px-3 text-xs font-semibold text-foreground">Response</TableHead><TableHead className="h-10 px-3 text-xs font-semibold text-foreground">Code</TableHead><TableHead className="h-10 px-0 text-xs font-semibold text-foreground">Location</TableHead></TableRow></TableHeader>
+              <TableBody>
+                {checks.map((check) => (
+                  <TableRow key={check.id} className="h-9">
+                    <TableCell className="px-0 py-1 text-sm">{check.checkedAt}</TableCell>
+                    <TableCell className="px-3 py-1"><CheckBadge status={check.status} /></TableCell>
+                    <TableCell className="px-3 py-1 text-sm font-medium">{check.responseTime}</TableCell>
+                    <TableCell className="px-3 py-1 text-sm">{check.statusCode}</TableCell>
+                    <TableCell className="px-0 py-1 text-sm">{check.location}</TableCell>
+                  </TableRow>
                 ))}
-              </dl>
-            </CardContent>
-          </Card>
+              </TableBody>
+            </Table>
+            <Link className="mt-5 inline-flex items-center gap-3 text-sm font-semibold text-link hover:underline" href={`?view=checks`}>
+              View all checks <ArrowRightIcon className="size-4" aria-hidden="true" />
+            </Link>
+          </CardContent>
+        </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Incident history</CardTitle>
-              <CardDescription>Recent incidents associated with this monitor.</CardDescription>
-            </CardHeader>
-            <CardContent>
-              {incidents.length > 0 ? (
-                <ol className="grid gap-4">
-                  {incidents.map((incident) => (
-                    <li className="grid gap-2 border-l-2 border-border pl-4" key={incident.id}>
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <Link className="font-medium hover:underline" href={`/monitors/incidents/${incident.id}`}>{incident.title}</Link>
-                        <Badge className={incident.resolved ? "bg-status-up text-status-up-foreground" : "bg-status-down text-status-down-foreground"}>{incident.status}</Badge>
-                      </div>
-                      <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-                        <span>{incident.openedAt}</span><span className="inline-flex items-center gap-1"><Clock3Icon className="size-3" aria-hidden="true" />{incident.duration}</span>
-                      </div>
-                    </li>
-                  ))}
-                </ol>
-              ) : <p className="text-sm text-muted-foreground">No incidents recorded for this monitor.</p>}
-            </CardContent>
-          </Card>
-        </div>
+        <Card className="gap-0 py-0">
+          <CardHeader className="px-5 pt-5 pb-3 sm:px-6">
+            <CardTitle>Incident history</CardTitle>
+            <CardDescription>Recent incidents associated with this monitor.</CardDescription>
+          </CardHeader>
+          <CardContent className="px-5 pb-5 sm:px-6">
+            {incidents.length > 0 ? (
+              <ol className="flex flex-col gap-4">
+                {incidents.map((incident) => (
+                  <li className="grid gap-1" key={incident.id}>
+                    <div className="flex items-center justify-between gap-3">
+                      <Link className="min-w-0 truncate text-sm font-semibold transition-colors hover:text-link" href={`/monitors/incidents/${incident.id}`}>{incident.title}</Link>
+                      <Badge variant="outline" className={incidentTone(incident)}>{incident.status}</Badge>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+                      <span>{incident.openedAt}</span><span className="inline-flex items-center gap-1"><Clock3Icon className="size-3.5" aria-hidden="true" />{incident.duration}</span>
+                    </div>
+                  </li>
+                ))}
+              </ol>
+            ) : <p className="text-sm text-muted-foreground">No incidents recorded for this monitor.</p>}
+            <Link className="mt-5 inline-flex items-center gap-3 text-sm font-semibold text-link hover:underline" href="/monitors/incidents">
+              View all incidents <ArrowRightIcon className="size-4" aria-hidden="true" />
+            </Link>
+          </CardContent>
+        </Card>
       </div>
     </main>
   )
