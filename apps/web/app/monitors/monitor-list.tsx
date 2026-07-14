@@ -12,7 +12,7 @@ import { useState } from "react"
 
 import { EmptyState, ErrorState, LoadingState } from "@/components/states"
 import { StatusBadge } from "@/components/status-badge"
-import { Button } from "@/components/ui/button"
+import { Button, buttonVariants } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import {
   Dialog,
@@ -105,9 +105,17 @@ export function MonitorList({ viewState }: { viewState: MonitorViewState }) {
         </Button>
       </header>
 
-      {viewState === "loading" ? <LoadingState label="Loading monitors" count={3} /> : null}
-      {viewState === "empty" ? <EmptyState title="No monitors yet" description="No endpoints are being checked. Create your first monitor to start tracking availability." action={<Button nativeButton={false} render={<Link href="/monitors/new" />}><PlusIcon data-icon="inline-start" />Create monitor</Button>} /> : null}
-      {viewState === "error" ? <ErrorState title="Unable to load monitors" description="Monitor data could not be loaded. Retry the request." action={<Button variant="outline" type="button" onClick={() => window.location.reload()}>Try again</Button>} /> : null}
+      {viewState === "loading" ? <LoadingState label="Loading monitors" count={3} className="xl:grid-cols-3" /> : null}
+      {viewState === "empty" ? (
+        <EmptyState
+          title="No monitors yet"
+          description="No endpoints are being checked. Create your first monitor to start tracking availability."
+          action={<Link className={buttonVariants()} href="/monitors/new"><PlusIcon data-icon="inline-start" />Create monitor</Link>}
+        />
+      ) : null}
+      {viewState === "error" ? (
+        <ErrorState title="Unable to load monitors" description="Monitor data could not be loaded. Retry the request." action={<Button variant="outline" type="button" onClick={() => window.location.reload()}>Try again</Button>} />
+      ) : null}
       {viewState === "list" ? (
         <>
           <Card className="hidden md:flex">
