@@ -105,11 +105,12 @@ function SupportNavigation() {
 
 function ApplicationHeader({ pathname }: { pathname: string }) {
   const isMonitorList = pathname === "/monitors"
+  const isIncidentHistory = pathname === "/monitors/incidents"
 
   return (
     <header className={cn(
       "sticky top-0 z-20 flex items-center border-b bg-background/95 px-4 backdrop-blur sm:px-6 lg:px-8 xl:px-11",
-      isMonitorList ? "h-[6.4rem]" : "h-[4.25rem]"
+      isMonitorList ? "h-[6.4rem]" : isIncidentHistory ? "h-14" : "h-[4.25rem]"
     )}>
       <div className="ml-auto flex items-center gap-1.5 sm:gap-3">
         <ThemeToggle className="size-11 border-transparent bg-transparent text-foreground hover:bg-muted" />
