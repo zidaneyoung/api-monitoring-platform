@@ -9,7 +9,7 @@ import {
   UserRound,
 } from "lucide-react";
 import Link from "next/link";
-import type { FormEvent, PointerEvent, RefObject } from "react";
+import type { FormEvent } from "react";
 import { useEffect, useId, useRef, useState } from "react";
 
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -82,36 +82,11 @@ function PasswordToggle({
   );
 }
 
-function AuthBackground({ backgroundRef }: { backgroundRef: RefObject<HTMLDivElement | null> }) {
-  return (
-    <div className="auth-background" ref={backgroundRef} aria-hidden="true">
-      <div className="signal-grid" />
-      <div className="signal-cursor" />
-      <div className="signal-parallax signal-parallax--back">
-        <div className="signal-aurora signal-aurora--one" />
-      </div>
-      <div className="signal-parallax signal-parallax--front">
-        <div className="signal-aurora signal-aurora--two" />
-      </div>
-      <div className="signal-orbits">
-        <div className="signal-orbit signal-orbit--one">
-          <span />
-        </div>
-        <div className="signal-orbit signal-orbit--two">
-          <span />
-        </div>
-      </div>
-    </div>
-  );
-}
-
 export function AuthForm({ mode }: { mode: Mode }) {
   const copy = COPY[mode];
   const formId = useId();
   const isRegister = mode === "register";
   const submitTimer = useRef<number | null>(null);
-  const pointerFrame = useRef<number | null>(null);
-  const backgroundRef = useRef<HTMLDivElement>(null);
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -128,36 +103,8 @@ export function AuthForm({ mode }: { mode: Mode }) {
   useEffect(() => {
     return () => {
       if (submitTimer.current !== null) window.clearTimeout(submitTimer.current);
-      if (pointerFrame.current !== null) window.cancelAnimationFrame(pointerFrame.current);
     };
   }, []);
-
-  function updateBackgroundPointer(event: PointerEvent<HTMLElement>) {
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-
-    const x = event.clientX / window.innerWidth;
-    const y = event.clientY / window.innerHeight;
-
-    if (pointerFrame.current !== null) window.cancelAnimationFrame(pointerFrame.current);
-    pointerFrame.current = window.requestAnimationFrame(() => {
-      backgroundRef.current?.style.setProperty("--cursor-x", `${x * 100}%`);
-      backgroundRef.current?.style.setProperty("--cursor-y", `${y * 100}%`);
-      backgroundRef.current?.style.setProperty("--pointer-x", `${(x - 0.5) * 18}px`);
-      backgroundRef.current?.style.setProperty("--pointer-y", `${(y - 0.5) * 18}px`);
-      backgroundRef.current?.style.setProperty("--pointer-x-reverse", `${(0.5 - x) * 12}px`);
-      backgroundRef.current?.style.setProperty("--pointer-y-reverse", `${(0.5 - y) * 12}px`);
-      pointerFrame.current = null;
-    });
-  }
-
-  function resetBackgroundPointer() {
-    backgroundRef.current?.style.setProperty("--cursor-x", "50%");
-    backgroundRef.current?.style.setProperty("--cursor-y", "50%");
-    backgroundRef.current?.style.setProperty("--pointer-x", "0px");
-    backgroundRef.current?.style.setProperty("--pointer-y", "0px");
-    backgroundRef.current?.style.setProperty("--pointer-x-reverse", "0px");
-    backgroundRef.current?.style.setProperty("--pointer-y-reverse", "0px");
-  }
 
   const shouldValidate = (field: keyof typeof touched) => touched[field] || submitAttempted;
   const nameError = isRegister && shouldValidate("name") ? validateName(name) : "";
@@ -208,12 +155,7 @@ export function AuthForm({ mode }: { mode: Mode }) {
   }
 
   return (
-    <main
-      className="auth-page"
-      onPointerMove={updateBackgroundPointer}
-      onPointerLeave={resetBackgroundPointer}
-    >
-      <AuthBackground backgroundRef={backgroundRef} />
+    <main className="auth-page">
       <ThemeToggle />
 
       <section className="auth-card" aria-labelledby={`${formId}-title`}>
