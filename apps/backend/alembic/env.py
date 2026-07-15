@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from alembic import context
 from app.config import load_settings
-from app.database import Base
+from app.database import Base, async_postgres_url
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -18,9 +18,10 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
+database_url = async_postgres_url(load_settings().database_url)
 config.set_main_option(
     "sqlalchemy.url",
-    load_settings().database_url.replace("%", "%%"),
+    database_url.render_as_string(hide_password=False).replace("%", "%%"),
 )
 target_metadata = Base.metadata
 

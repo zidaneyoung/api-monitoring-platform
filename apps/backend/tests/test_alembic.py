@@ -4,7 +4,7 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 from sqlalchemy import MetaData
 
-from app.database import Base
+from app.database import Base, async_postgres_url
 
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
@@ -27,3 +27,9 @@ def test_alembic_ini_does_not_hardcode_database_url() -> None:
 
 def test_application_metadata_is_available_to_alembic() -> None:
     assert isinstance(Base.metadata, MetaData)
+
+
+def test_alembic_normalizes_legacy_postgresql_url() -> None:
+    url = async_postgres_url("postgresql://user:password@database:5432/app")
+
+    assert url.drivername == "postgresql+asyncpg"

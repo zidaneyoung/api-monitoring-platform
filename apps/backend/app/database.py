@@ -22,7 +22,7 @@ class Base(DeclarativeBase):
     pass
 
 
-def _async_postgres_url(database_url: str) -> URL:
+def async_postgres_url(database_url: str) -> URL:
     url = make_url(database_url)
     if url.drivername == "postgresql":
         return url.set(drivername="postgresql+asyncpg")
@@ -33,7 +33,7 @@ def _async_postgres_url(database_url: str) -> URL:
 
 def create_database_engine(database_url: str) -> AsyncEngine:
     return create_async_engine(
-        _async_postgres_url(database_url),
+        async_postgres_url(database_url),
         pool_pre_ping=True,
     )
 
