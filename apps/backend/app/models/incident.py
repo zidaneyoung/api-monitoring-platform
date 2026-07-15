@@ -21,6 +21,7 @@ from app.database import Base
 if TYPE_CHECKING:
     from app.models.monitor import Monitor
     from app.models.monitor_check import MonitorCheck
+    from app.models.notification_delivery import NotificationDelivery
     from app.models.user import User
 
 
@@ -101,6 +102,11 @@ class Incident(Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
         order_by="IncidentEvent.sequence_number",
+    )
+    notification_deliveries: Mapped[list["NotificationDelivery"]] = relationship(
+        back_populates="incident",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
     )
 
 

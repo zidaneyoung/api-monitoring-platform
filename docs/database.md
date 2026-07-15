@@ -12,3 +12,7 @@ ownerless records.
 Incident cause categories and messages contain only normalized, user-safe diagnostic
 details. Callers must remove credentials, tokens, response bodies, and other secrets
 before persisting these fields.
+
+Notification delivery rows store provider message identifiers and normalized error
+codes/messages only. Raw provider responses, API keys, and provider credentials must
+not be stored in notification delivery fields.
