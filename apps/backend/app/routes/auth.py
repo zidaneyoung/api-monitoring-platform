@@ -187,3 +187,31 @@ async def current_user(
     set_session_cookie(response, authenticated.token, settings)
     response.headers["Cache-Control"] = "no-store"
     return authenticated.user
+
+
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+async def logout_user(
+    response: Response,
+    session_token: str | None = Cookie(
+        default=None,
+        alias=settings.session_cookie_name,
+    ),
+    session_store: SessionStore = Depends(get_session_store),
+) -> None:
+    clear_session_cookie(response, settings)
+    response.headers["Cache-Control"] = "no-store"
+
+    if session_token is None:
+        return
+
+    try:
+        await session_store.delete_session(session_token)
+    except SessionStoreUnavailableError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "session_unavailable",
+                "message": "Unable to complete logout. Try again later.",
+            },
+            headers={"Set-Cookie": response.headers["set-cookie"]},
+        ) from None

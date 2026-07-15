@@ -47,3 +47,23 @@ def test_session_is_shared_renewed_and_rejected_after_expiration() -> None:
             await second_redis.aclose()
 
     asyncio.run(exercise_session())
+
+
+def test_logout_deletes_only_the_selected_session() -> None:
+    async def exercise_logout() -> None:
+        redis = from_url(redis_url(), decode_responses=True)
+        store = SessionStore(redis, ttl_seconds=60)
+        first_user_id = uuid4()
+        second_user_id = uuid4()
+        first_token = await store.create_session(first_user_id)
+        second_token = await store.create_session(second_user_id)
+        try:
+            await store.delete_session(first_token)
+
+            assert await store.get_user_id(first_token, renew=False) is None
+            assert await store.get_user_id(second_token, renew=False) == second_user_id
+        finally:
+            await redis.delete(session_key(first_token), session_key(second_token))
+            await redis.aclose()
+
+    asyncio.run(exercise_logout())

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 
-import { getCurrentUser, safeAuthRedirect } from "@/lib/auth-api"
+import { getCurrentUser, logoutUser, safeAuthRedirect } from "@/lib/auth-api"
 
 
 afterEach(() => {
@@ -49,5 +49,32 @@ describe("getCurrentUser", () => {
     }), { status: 401 })))
 
     expect(await getCurrentUser()).toBeNull()
+  })
+})
+
+describe("logoutUser", () => {
+  it("posts the HttpOnly session cookie to logout", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }))
+    vi.stubGlobal("fetch", fetchMock)
+
+    await logoutUser()
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:8000/auth/logout",
+      {
+        method: "POST",
+        credentials: "include",
+        cache: "no-store",
+      },
+    )
+  })
+
+  it.each([
+    ["server failure", vi.fn().mockResolvedValue(new Response(null, { status: 503 }))],
+    ["network failure", vi.fn().mockRejectedValue(new Error("sensitive transport detail"))],
+  ])("returns a controlled error for %s", async (_label, fetchMock) => {
+    vi.stubGlobal("fetch", fetchMock)
+
+    await expect(logoutUser()).rejects.toThrow("Unable to log out. Try again.")
   })
 })

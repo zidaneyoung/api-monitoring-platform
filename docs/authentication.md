@@ -17,7 +17,9 @@ tokens.
    and email. The response renews the cookie `Max-Age`, providing a sliding session.
 5. Missing, tampered, expired, unknown-user, and disabled-user sessions receive a
    generic `401` response. Invalid user sessions are removed from Redis.
-6. Once the TTL expires, Redis removes the session and the cookie can no longer
+6. `POST /auth/logout` deletes the active Redis session and expires the browser
+   cookie. Repeating logout is safe and does not affect any other user's session.
+7. Once the TTL expires, Redis removes the session and the cookie can no longer
    authenticate.
 
 Frontend requests use `credentials: "include"`. Authentication tokens are never

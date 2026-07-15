@@ -106,3 +106,19 @@ export async function getCurrentUser(): Promise<CurrentUser | null> {
     return null
   }
 }
+
+export async function logoutUser(): Promise<void> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/auth/logout`, {
+      method: "POST",
+      credentials: "include",
+      cache: "no-store",
+    })
+
+    if (response.ok) return
+  } catch {
+    // The UI receives the same safe message for network and server failures.
+  }
+
+  throw new Error("Unable to log out. Try again.")
+}

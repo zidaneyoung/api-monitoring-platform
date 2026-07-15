@@ -14,6 +14,7 @@ import {
 } from "lucide-react"
 
 import { ThemeToggle } from "@/components/theme-toggle"
+import { LogoutButton } from "@/components/logout-button"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 
@@ -120,15 +121,13 @@ function ApplicationHeader({ pathname }: { pathname: string }) {
           <BellIcon className="size-6" strokeWidth={1.7} />
           <span className="absolute top-2.5 right-2.5 size-2.5 rounded-full border-2 border-background bg-primary" aria-hidden="true" />
         </Button>
-        <Link
-          href="/login"
+        <LogoutButton
           className={cn(buttonVariants({ variant: "ghost", size: "lg" }), "h-12 gap-3 px-1.5 sm:px-2")}
-          aria-label="Open account page for Zidane Young"
         >
           <span className="grid size-11 place-items-center rounded-full bg-primary/10 text-sm font-semibold text-primary">ZY</span>
           <span className="hidden text-base font-medium md:block">Zidane Young</span>
           <ChevronDownIcon className="hidden size-4 text-muted-foreground md:block" aria-hidden="true" />
-        </Link>
+        </LogoutButton>
       </div>
     </header>
   )
