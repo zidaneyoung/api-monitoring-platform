@@ -9,12 +9,17 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
+from sqlalchemy.orm import DeclarativeBase
 
 from app.config import load_settings
 
 
 class DatabaseUnavailableError(RuntimeError):
     """Raised without connection details when PostgreSQL cannot be reached."""
+
+
+class Base(DeclarativeBase):
+    pass
 
 
 def _async_postgres_url(database_url: str) -> URL:

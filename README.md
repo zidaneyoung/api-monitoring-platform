@@ -96,11 +96,33 @@ From `apps/web`, use `npm ci` for a clean install. Use `npm install <package>` o
 
 ## Migration commands
 
-Not applicable in the current repository: no migration tooling or commands are present.
+Alembic reads the same backend database settings as the application. Keep the connection in `apps/backend/.env`; do not add credentials to `apps/backend/alembic.ini`.
 
-The only database initialization mechanism verified from repository files is the `db` service in `compose.yaml`. The official `postgres:16.4-alpine` image creates the configured database on first startup from `DATABASE_NAME`, `DATABASE_USER`, and `DATABASE_PASSWORD`, and persists data in the `postgres_data` volume.
+After starting the stack, show the current migration revision:
 
-No repository file verifies how application tables or schema objects are created.
+```bash
+docker compose exec backend alembic current
+```
+
+Apply all migrations:
+
+```bash
+docker compose exec backend alembic upgrade head
+```
+
+Generate a migration after changing SQLAlchemy model metadata:
+
+```bash
+docker compose exec backend alembic revision --autogenerate -m "describe schema change"
+```
+
+Review every generated migration before applying it. For development rollback only, revert one revision:
+
+```bash
+docker compose exec backend alembic downgrade -1
+```
+
+Reapply the reverted migration with `docker compose exec backend alembic upgrade head`.
 
 ## Stop and clean up
 
