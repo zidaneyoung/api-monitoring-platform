@@ -7,21 +7,15 @@ import {
   CirclePauseIcon,
   CircleXIcon,
   GaugeIcon,
-  LayoutDashboardIcon,
-  MonitorIcon,
   PlusIcon,
-  SettingsIcon,
-  ShieldAlertIcon,
 } from "lucide-react"
 
 import { getIncidents } from "@/app/monitors/incidents-data"
 import { mockMonitors, type Monitor } from "@/app/monitors/monitor-data"
 import { EmptyState, ErrorState, LoadingState } from "@/components/states"
 import { StatusBadge, type MonitorStatus } from "@/components/status-badge"
-import { ThemeToggle } from "@/components/theme-toggle"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { cn } from "@/lib/utils"
 
 type PageProps = {
   searchParams: Promise<{ state?: string | string[] }>
@@ -34,13 +28,6 @@ type SummaryMetric = {
   status: MonitorStatus
   icon: typeof CircleCheckIcon
 }
-
-const navigation = [
-  { href: "/dashboard", label: "Overview", icon: LayoutDashboardIcon },
-  { href: "/monitors", label: "Monitors", icon: MonitorIcon },
-  { href: "/monitors?view=incidents", label: "Incidents", icon: ShieldAlertIcon },
-  { href: "/settings", label: "Settings", icon: SettingsIcon },
-]
 
 const summaryMetrics: SummaryMetric[] = [
   { label: "Up", status: "up", icon: CircleCheckIcon },
@@ -65,61 +52,8 @@ function countByStatus(monitors: Monitor[], status: MonitorStatus) {
   return monitors.filter((monitor) => monitor.status === status).length
 }
 
-function AppNavigation({ mobile = false }: { mobile?: boolean }) {
-  return (
-    <nav aria-label="Application" className={cn(mobile ? "flex gap-1 overflow-x-auto px-4 py-2 lg:hidden" : "hidden lg:flex lg:flex-col lg:gap-1")}>
-      {navigation.map((item) => {
-        const Icon = item.icon
-        const isCurrent = item.href === "/dashboard"
-
-        return (
-          <Link
-            key={item.label}
-            href={item.href}
-            aria-current={isCurrent ? "page" : undefined}
-            className={cn(
-              "flex shrink-0 items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
-              isCurrent ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"
-            )}
-          >
-            <Icon className="size-4" aria-hidden="true" />
-            {item.label}
-          </Link>
-        )
-      })}
-    </nav>
-  )
-}
-
 function DashboardShell({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="min-h-screen bg-muted/40">
-      <header className="border-b bg-background lg:hidden">
-        <div className="flex h-14 items-center justify-between px-4">
-          <Link href="/dashboard" className="flex items-center gap-2 font-semibold">
-            <span className="grid size-7 place-items-center rounded-md bg-primary text-primary-foreground"><ActivityIcon className="size-4" /></span>
-            Uptime HQ
-          </Link>
-          <ThemeToggle />
-        </div>
-        <AppNavigation mobile />
-      </header>
-      <div className="mx-auto flex min-h-screen max-w-[1600px]">
-        <aside className="hidden w-64 shrink-0 border-r bg-background px-3 py-5 lg:flex lg:flex-col">
-          <Link href="/dashboard" className="mb-8 flex items-center gap-2 px-3 font-semibold">
-            <span className="grid size-7 place-items-center rounded-md bg-primary text-primary-foreground"><ActivityIcon className="size-4" /></span>
-            Uptime HQ
-          </Link>
-          <AppNavigation />
-          <div className="mt-auto flex items-center justify-between rounded-lg bg-muted px-3 py-2 text-xs text-muted-foreground">
-            <span>Mock workspace</span>
-            <ThemeToggle />
-          </div>
-        </aside>
-        {children}
-      </div>
-    </div>
-  )
+  return <div className="min-h-full bg-muted/40">{children}</div>
 }
 
 function SummaryCards({ monitors }: { monitors: Monitor[] }) {

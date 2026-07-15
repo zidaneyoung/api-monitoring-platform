@@ -6,6 +6,7 @@ import {
   BellIcon,
   ChevronDownIcon,
   CircleHelpIcon,
+  LayoutDashboardIcon,
   MailIcon,
   MessageCircleIcon,
   MonitorIcon,
@@ -19,6 +20,7 @@ import { cn } from "@/lib/utils"
 const navigationItems = [
   { href: "/monitors", label: "Monitors", icon: MonitorIcon },
   { href: "/monitors/incidents", label: "Incidents", icon: BellIcon },
+  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboardIcon },
   { label: "Alerts", icon: MailIcon },
   { label: "Settings", icon: SettingsIcon },
 ] as const
@@ -134,7 +136,7 @@ function ApplicationHeader({ pathname }: { pathname: string }) {
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
-  const isStandalonePage = pathname === "/login" || pathname === "/register" || pathname === "/dashboard"
+  const isStandalonePage = pathname === "/login" || pathname === "/register"
 
   if (isStandalonePage) return children
 
