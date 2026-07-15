@@ -11,6 +11,16 @@ from app.main import app
 client = TestClient(app)
 
 
+def test_postgres_probe_uses_database_connection_check(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_check = AsyncMock(return_value=True)
+    monkeypatch.setattr(health, "check_database_connection", database_check)
+
+    assert asyncio.run(health.probe_postgres()) is True
+    database_check.assert_awaited_once_with()
+
+
 def test_liveness_does_not_call_dependency_probes(monkeypatch: pytest.MonkeyPatch) -> None:
     postgres_probe = AsyncMock(side_effect=AssertionError("postgres probe called"))
     redis_probe = AsyncMock(side_effect=AssertionError("redis probe called"))

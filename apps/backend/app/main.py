@@ -1,12 +1,23 @@
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 
 from app.config import load_settings
+from app.database import dispose_database_engine
 from app.health import router as health_router
 
 
 settings = load_settings()
 
-app = FastAPI(title="API Monitoring Platform Backend")
+
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    yield
+    await dispose_database_engine()
+
+
+app = FastAPI(title="API Monitoring Platform Backend", lifespan=lifespan)
 app.include_router(health_router)
 
 

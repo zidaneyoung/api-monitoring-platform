@@ -5,6 +5,7 @@ from fastapi import APIRouter, status
 from fastapi.responses import JSONResponse
 
 from app.config import load_settings
+from app.database import check_database_connection
 
 
 router = APIRouter(prefix="/health", tags=["health"])
@@ -13,22 +14,8 @@ HEALTH_PROBE_TIMEOUT_SECONDS = 2.0
 
 
 async def probe_postgres() -> bool:
-    import asyncpg
-
-    settings = load_settings()
-    connection = None
     async with asyncio.timeout(HEALTH_PROBE_TIMEOUT_SECONDS):
-        try:
-            connection = await asyncpg.connect(
-                dsn=settings.database_url,
-                timeout=HEALTH_PROBE_TIMEOUT_SECONDS,
-                command_timeout=HEALTH_PROBE_TIMEOUT_SECONDS,
-            )
-            await connection.execute("SELECT 1")
-            return True
-        finally:
-            if connection is not None:
-                await connection.close()
+        return await check_database_connection()
 
 
 async def probe_redis() -> bool:

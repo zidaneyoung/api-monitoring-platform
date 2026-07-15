@@ -32,7 +32,7 @@ def load_settings() -> Settings:
     database_url = os.getenv(
         "DATABASE_URL",
         (
-            f"postgresql://{quote_plus(database_user)}:{quote_plus(database_password)}"
+            f"postgresql+asyncpg://{quote_plus(database_user)}:{quote_plus(database_password)}"
             f"@{database_host}:{database_port}/{database_name}"
         ),
     )
