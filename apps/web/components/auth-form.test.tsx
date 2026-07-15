@@ -3,11 +3,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { AuthForm } from "@/components/auth-form"
 
+const navigationMock = vi.hoisted(() => ({ replace: vi.fn() }))
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => navigationMock,
+}))
+
 const fetchMock = vi.fn()
 
 beforeEach(() => {
   vi.stubGlobal("fetch", fetchMock)
   fetchMock.mockReset()
+  navigationMock.replace.mockReset()
 })
 
 afterEach(() => {
@@ -40,9 +47,10 @@ describe("AuthForm", () => {
     expect(screen.getByRole("button", { name: "Hide password" })).toBeTruthy()
   })
 
-  it("shows loading and success states for a valid mock login", () => {
-    vi.useFakeTimers()
-    render(<AuthForm mode="login" />)
+  it("creates a login session and safely redirects on success", async () => {
+    let completeRequest: (response: Response) => void = () => undefined
+    fetchMock.mockReturnValue(new Promise<Response>((resolve) => { completeRequest = resolve }))
+    render(<AuthForm mode="login" redirectTo="/monitors?state=ready" />)
 
     fireEvent.change(screen.getByLabelText("Email address"), {
       target: { value: "qa@example.com" },
@@ -53,10 +61,27 @@ describe("AuthForm", () => {
     fireEvent.click(screen.getByRole("button", { name: "Log in" }))
 
     expect(screen.getByRole("button", { name: "Working…" }).getAttribute("disabled")).not.toBeNull()
-    expect(screen.getByText("Submitting mock request…")).toBeTruthy()
+    expect(screen.getByText("Signing in…")).toBeTruthy()
 
-    act(() => vi.advanceTimersByTime(1200))
-    expect(screen.getByText("Mock login complete. No session was created.")).toBeTruthy()
+    await act(async () => completeRequest(new Response(JSON.stringify({ email: "qa@example.com" }), { status: 200 })))
+    expect(await screen.findByText("Signed in. Redirecting…")).toBeTruthy()
+    expect(navigationMock.replace).toHaveBeenCalledWith("/monitors?state=ready")
+    const [, options] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(options.credentials).toBe("include")
+  })
+
+  it("shows a generic invalid-credential response without redirecting", async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      detail: { code: "invalid_credentials", message: "Invalid email or password." },
+    }), { status: 401, headers: { "Content-Type": "application/json" } }))
+    render(<AuthForm mode="login" />)
+
+    fireEvent.change(screen.getByLabelText("Email address"), { target: { value: "qa@example.com" } })
+    fireEvent.change(screen.getByLabelText("Password"), { target: { value: "wrong-password" } })
+    fireEvent.click(screen.getByRole("button", { name: "Log in" }))
+
+    expect(await screen.findByText("Invalid email or password.")).toBeTruthy()
+    expect(navigationMock.replace).not.toHaveBeenCalled()
   })
 
   it("requires registration details and matching passwords", () => {

@@ -9,11 +9,12 @@ import {
   UserRound,
 } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import type { FormEvent } from "react";
-import { useEffect, useId, useRef, useState } from "react";
+import { useId, useState } from "react";
 
 import { ThemeToggle } from "@/components/theme-toggle";
-import { registerUser } from "@/lib/auth-api";
+import { loginUser, registerUser } from "@/lib/auth-api";
 
 type Mode = "login" | "register";
 type Tone = "idle" | "loading" | "success" | "error";
@@ -23,7 +24,7 @@ const COPY = {
     title: "Welcome back",
     description: "Log in to your monitoring console",
     submit: "Log in",
-    success: "Mock login complete. No session was created.",
+    success: "Signed in. Redirecting…",
     statusIntro: "Ready to sign in",
     alternateLabel: "Don’t have an account?",
     alternateHref: "/register",
@@ -83,11 +84,17 @@ function PasswordToggle({
   );
 }
 
-export function AuthForm({ mode }: { mode: Mode }) {
+export function AuthForm({
+  mode,
+  redirectTo = "/dashboard",
+}: {
+  mode: Mode;
+  redirectTo?: string;
+}) {
   const copy = COPY[mode];
+  const router = useRouter();
   const formId = useId();
   const isRegister = mode === "register";
-  const submitTimer = useRef<number | null>(null);
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -101,12 +108,6 @@ export function AuthForm({ mode }: { mode: Mode }) {
   const [tone, setTone] = useState<Tone>("idle");
   const [submitAttempted, setSubmitAttempted] = useState(false);
   const [serverErrors, setServerErrors] = useState({ email: "", password: "" });
-
-  useEffect(() => {
-    return () => {
-      if (submitTimer.current !== null) window.clearTimeout(submitTimer.current);
-    };
-  }, []);
 
   const shouldValidate = (field: keyof typeof touched) => touched[field] || submitAttempted;
   const nameError = isRegister && shouldValidate("name") ? validateName(name) : "";
@@ -144,7 +145,7 @@ export function AuthForm({ mode }: { mode: Mode }) {
 
     setIsSubmitting(true);
     setTone("loading");
-    setStatus(isRegister ? "Creating account…" : "Submitting mock request…");
+    setStatus(isRegister ? "Creating account…" : "Signing in…");
 
     if (isRegister) {
       const errors = await registerUser(email, password);
@@ -169,15 +170,22 @@ export function AuthForm({ mode }: { mode: Mode }) {
       return;
     }
 
-    if (submitTimer.current !== null) window.clearTimeout(submitTimer.current);
-    submitTimer.current = window.setTimeout(() => {
-      setIsSubmitting(false);
-      setTone("success");
-      setStatus(copy.success);
-      setSubmitAttempted(false);
-      setTouched({ name: false, email: false, password: false, confirm: false });
-      submitTimer.current = null;
-    }, 1200);
+    const errors = await loginUser(email, password);
+    setIsSubmitting(false);
+
+    if (errors.length > 0) {
+      setServerErrors({
+        email: errors.find((error) => error.field === "email")?.message ?? "",
+        password: errors.find((error) => error.field === "password")?.message ?? "",
+      });
+      setTone("error");
+      setStatus(errors.find((error) => error.field === "form")?.message ?? "Fix the highlighted fields and try again.");
+      return;
+    }
+
+    setTone("success");
+    setStatus(copy.success);
+    router.replace(redirectTo);
   }
 
   return (

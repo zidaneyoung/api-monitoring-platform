@@ -55,3 +55,35 @@ export async function registerUser(email: string, password: string): Promise<Aut
     return [{ field: "form", message: "Unable to reach the service. Try again." }]
   }
 }
+
+export async function loginUser(email: string, password: string): Promise<AuthError[]> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/auth/login`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    })
+
+    return response.ok ? [] : readErrors(response)
+  } catch {
+    return [{ field: "form", message: "Unable to reach the service. Try again." }]
+  }
+}
+
+export function safeAuthRedirect(destination: string | undefined): string {
+  if (
+    !destination
+    || !destination.startsWith("/")
+    || destination.startsWith("//")
+    || destination.includes("\\")
+    || /[\u0000-\u001f]/.test(destination)
+  ) {
+    return "/dashboard"
+  }
+
+  const parsed = new URL(destination, "http://app.local")
+  return parsed.origin === "http://app.local"
+    ? `${parsed.pathname}${parsed.search}${parsed.hash}`
+    : "/dashboard"
+}

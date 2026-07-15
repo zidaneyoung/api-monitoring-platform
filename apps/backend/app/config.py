@@ -8,6 +8,10 @@ class Settings:
     environment: str
     debug: bool
     frontend_origin: str
+    session_cookie_name: str
+    session_ttl_seconds: int
+    session_cookie_secure: bool
+    session_cookie_samesite: str
     database_host: str
     database_port: int
     database_name: str
@@ -21,6 +25,7 @@ class Settings:
 
 
 def load_settings() -> Settings:
+    environment = os.getenv("ENVIRONMENT", "development")
     database_host = os.getenv("DATABASE_HOST", "db")
     database_port = int(os.getenv("DATABASE_PORT", "5432"))
     database_name = os.getenv("DATABASE_NAME", "api_monitoring")
@@ -42,9 +47,16 @@ def load_settings() -> Settings:
     )
 
     return Settings(
-        environment=os.getenv("ENVIRONMENT", "development"),
+        environment=environment,
         debug=os.getenv("DEBUG", "false").lower() == "true",
         frontend_origin=os.getenv("FRONTEND_ORIGIN", "http://localhost:3000"),
+        session_cookie_name=os.getenv("SESSION_COOKIE_NAME", "amp_session"),
+        session_ttl_seconds=int(os.getenv("SESSION_TTL_SECONDS", "3600")),
+        session_cookie_secure=(
+            environment.lower() == "production"
+            or os.getenv("SESSION_COOKIE_SECURE", "false").lower() == "true"
+        ),
+        session_cookie_samesite=os.getenv("SESSION_COOKIE_SAMESITE", "lax"),
         database_host=database_host,
         database_port=database_port,
         database_name=database_name,
