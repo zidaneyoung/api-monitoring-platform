@@ -11,7 +11,7 @@ from app.config import Settings, load_settings
 
 
 class SessionStoreUnavailableError(RuntimeError):
-    """Raised without Redis details when a session cannot be created."""
+    """Raised without Redis details when the session store cannot respond."""
 
 
 def session_key(token: str) -> str:
@@ -39,6 +39,31 @@ class SessionStore:
             raise SessionStoreUnavailableError("Session service unavailable")
         return token
 
+    async def get_user_id(self, token: str, *, renew: bool = True) -> UUID | None:
+        key = session_key(token)
+        try:
+            value = (
+                await self.redis.getex(key, ex=self.ttl_seconds)
+                if renew
+                else await self.redis.get(key)
+            )
+        except RedisError:
+            raise SessionStoreUnavailableError("Session service unavailable") from None
+
+        if value is None:
+            return None
+        try:
+            return UUID(value)
+        except (TypeError, ValueError):
+            await self.delete_session(token)
+            return None
+
+    async def delete_session(self, token: str) -> None:
+        try:
+            await self.redis.delete(session_key(token))
+        except RedisError:
+            raise SessionStoreUnavailableError("Session service unavailable") from None
+
 
 def set_session_cookie(response: Response, token: str, settings: Settings) -> None:
     same_site = cast(
@@ -49,6 +74,20 @@ def set_session_cookie(response: Response, token: str, settings: Settings) -> No
         key=settings.session_cookie_name,
         value=token,
         max_age=settings.session_ttl_seconds,
+        httponly=True,
+        secure=settings.session_cookie_secure,
+        samesite=same_site,
+        path="/",
+    )
+
+
+def clear_session_cookie(response: Response, settings: Settings) -> None:
+    same_site = cast(
+        Literal["lax", "strict", "none"],
+        settings.session_cookie_samesite,
+    )
+    response.delete_cookie(
+        key=settings.session_cookie_name,
         httponly=True,
         secure=settings.session_cookie_secure,
         samesite=same_site,

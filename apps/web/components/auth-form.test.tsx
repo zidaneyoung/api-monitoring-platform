@@ -21,6 +21,7 @@ afterEach(() => {
   cleanup()
   document.documentElement.classList.remove("dark")
   localStorage.clear()
+  sessionStorage.clear()
   vi.useRealTimers()
   vi.unstubAllGlobals()
 })
@@ -68,6 +69,8 @@ describe("AuthForm", () => {
     expect(navigationMock.replace).toHaveBeenCalledWith("/monitors?state=ready")
     const [, options] = fetchMock.mock.calls[0] as [string, RequestInit]
     expect(options.credentials).toBe("include")
+    expect(localStorage.length).toBe(0)
+    expect(sessionStorage.length).toBe(0)
   })
 
   it("shows a generic invalid-credential response without redirecting", async () => {

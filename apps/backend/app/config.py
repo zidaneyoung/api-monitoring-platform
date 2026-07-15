@@ -26,6 +26,20 @@ class Settings:
 
 def load_settings() -> Settings:
     environment = os.getenv("ENVIRONMENT", "development")
+    session_ttl_seconds = int(os.getenv("SESSION_TTL_SECONDS", "3600"))
+    if session_ttl_seconds <= 0:
+        raise ValueError("SESSION_TTL_SECONDS must be greater than zero")
+
+    session_cookie_secure = (
+        environment.lower() == "production"
+        or os.getenv("SESSION_COOKIE_SECURE", "false").lower() == "true"
+    )
+    session_cookie_samesite = os.getenv("SESSION_COOKIE_SAMESITE", "lax").lower()
+    if session_cookie_samesite not in {"lax", "strict", "none"}:
+        raise ValueError("SESSION_COOKIE_SAMESITE must be lax, strict, or none")
+    if session_cookie_samesite == "none" and not session_cookie_secure:
+        raise ValueError("SameSite=None requires secure session cookies")
+
     database_host = os.getenv("DATABASE_HOST", "db")
     database_port = int(os.getenv("DATABASE_PORT", "5432"))
     database_name = os.getenv("DATABASE_NAME", "api_monitoring")
@@ -51,12 +65,9 @@ def load_settings() -> Settings:
         debug=os.getenv("DEBUG", "false").lower() == "true",
         frontend_origin=os.getenv("FRONTEND_ORIGIN", "http://localhost:3000"),
         session_cookie_name=os.getenv("SESSION_COOKIE_NAME", "amp_session"),
-        session_ttl_seconds=int(os.getenv("SESSION_TTL_SECONDS", "3600")),
-        session_cookie_secure=(
-            environment.lower() == "production"
-            or os.getenv("SESSION_COOKIE_SECURE", "false").lower() == "true"
-        ),
-        session_cookie_samesite=os.getenv("SESSION_COOKIE_SAMESITE", "lax"),
+        session_ttl_seconds=session_ttl_seconds,
+        session_cookie_secure=session_cookie_secure,
+        session_cookie_samesite=session_cookie_samesite,
         database_host=database_host,
         database_port=database_port,
         database_name=database_name,

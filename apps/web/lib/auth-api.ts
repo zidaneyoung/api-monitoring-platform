@@ -5,6 +5,11 @@ export type AuthError = {
   message: string
 }
 
+export type CurrentUser = {
+  id: string
+  email: string
+}
+
 type ErrorPayload = {
   errors?: Array<{ field?: string; message?: string }>
   detail?: { field?: string; message?: string }
@@ -86,4 +91,18 @@ export function safeAuthRedirect(destination: string | undefined): string {
   return parsed.origin === "http://app.local"
     ? `${parsed.pathname}${parsed.search}${parsed.hash}`
     : "/dashboard"
+}
+
+export async function getCurrentUser(): Promise<CurrentUser | null> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/auth/me`, {
+      method: "GET",
+      credentials: "include",
+      cache: "no-store",
+    })
+
+    return response.ok ? (await response.json()) as CurrentUser : null
+  } catch {
+    return null
+  }
 }
