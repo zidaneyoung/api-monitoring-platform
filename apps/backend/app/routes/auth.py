@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from uuid import UUID
 
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,6 +12,13 @@ from app.database import get_database_session
 from app.models import User
 from app.schemas.auth import LoginRequest, PublicUser, RegistrationRequest
 from app.security.passwords import dummy_password_hash, hash_password, verify_password
+from app.security.rate_limits import (
+    RateLimitScope,
+    RateLimitStore,
+    RateLimitStoreUnavailableError,
+    get_rate_limit_store,
+    rate_limit_key,
+)
 from app.security.sessions import (
     SessionStore,
     SessionStoreUnavailableError,
@@ -23,6 +30,14 @@ from app.security.sessions import (
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
 settings = load_settings()
+RATE_LIMIT_RESPONSES = {
+    status.HTTP_429_TOO_MANY_REQUESTS: {
+        "description": "Authentication request rate limit exceeded.",
+    },
+    status.HTTP_503_SERVICE_UNAVAILABLE: {
+        "description": "Authentication state service unavailable.",
+    },
+}
 
 
 @dataclass(frozen=True)
@@ -39,6 +54,72 @@ def _duplicate_email_error() -> HTTPException:
             "field": "email",
             "message": "An account with this email already exists.",
         },
+    )
+
+
+async def enforce_rate_limit(
+    request: Request,
+    store: RateLimitStore,
+    *,
+    scope: RateLimitScope,
+    max_attempts: int,
+    window_seconds: int,
+) -> None:
+    client_identifier = request.client.host if request.client is not None else "unknown"
+    key = rate_limit_key(scope, client_identifier)
+    try:
+        decision = await store.consume(
+            key,
+            max_attempts=max_attempts,
+            window_seconds=window_seconds,
+        )
+    except RateLimitStoreUnavailableError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "rate_limit_unavailable",
+                "message": "Unable to process authentication. Try again later.",
+            },
+            headers={"Cache-Control": "no-store"},
+        ) from None
+
+    if not decision.allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={
+                "code": "rate_limited",
+                "message": "Too many authentication attempts. Try again later.",
+            },
+            headers={
+                "Retry-After": str(decision.retry_after),
+                "Cache-Control": "no-store",
+            },
+        )
+
+
+async def enforce_registration_rate_limit(
+    request: Request,
+    rate_limit_store: RateLimitStore = Depends(get_rate_limit_store),
+) -> None:
+    await enforce_rate_limit(
+        request,
+        rate_limit_store,
+        scope="register",
+        max_attempts=settings.auth_registration_rate_limit_attempts,
+        window_seconds=settings.auth_registration_rate_limit_window_seconds,
+    )
+
+
+async def enforce_login_rate_limit(
+    request: Request,
+    rate_limit_store: RateLimitStore = Depends(get_rate_limit_store),
+) -> None:
+    await enforce_rate_limit(
+        request,
+        rate_limit_store,
+        scope="login",
+        max_attempts=settings.auth_login_rate_limit_attempts,
+        window_seconds=settings.auth_login_rate_limit_window_seconds,
     )
 
 
@@ -107,6 +188,8 @@ async def require_authenticated_session(
     "/register",
     response_model=PublicUser,
     status_code=status.HTTP_201_CREATED,
+    responses=RATE_LIMIT_RESPONSES,
+    dependencies=[Depends(enforce_registration_rate_limit)],
 )
 async def register_user(
     payload: RegistrationRequest,
@@ -140,7 +223,12 @@ def _invalid_credentials_error() -> HTTPException:
     )
 
 
-@router.post("/login", response_model=PublicUser)
+@router.post(
+    "/login",
+    response_model=PublicUser,
+    responses=RATE_LIMIT_RESPONSES,
+    dependencies=[Depends(enforce_login_rate_limit)],
+)
 async def login_user(
     payload: LoginRequest,
     response: Response,

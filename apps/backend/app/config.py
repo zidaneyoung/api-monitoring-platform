@@ -12,6 +12,10 @@ class Settings:
     session_ttl_seconds: int
     session_cookie_secure: bool
     session_cookie_samesite: str
+    auth_login_rate_limit_attempts: int
+    auth_login_rate_limit_window_seconds: int
+    auth_registration_rate_limit_attempts: int
+    auth_registration_rate_limit_window_seconds: int
     database_host: str
     database_port: int
     database_name: str
@@ -24,11 +28,32 @@ class Settings:
     redis_url: str
 
 
+def _positive_int(name: str, default: str) -> int:
+    value = int(os.getenv(name, default))
+    if value <= 0:
+        raise ValueError(f"{name} must be greater than zero")
+    return value
+
+
 def load_settings() -> Settings:
     environment = os.getenv("ENVIRONMENT", "development")
-    session_ttl_seconds = int(os.getenv("SESSION_TTL_SECONDS", "3600"))
-    if session_ttl_seconds <= 0:
-        raise ValueError("SESSION_TTL_SECONDS must be greater than zero")
+    session_ttl_seconds = _positive_int("SESSION_TTL_SECONDS", "3600")
+    auth_login_rate_limit_attempts = _positive_int(
+        "AUTH_LOGIN_RATE_LIMIT_ATTEMPTS",
+        "5",
+    )
+    auth_login_rate_limit_window_seconds = _positive_int(
+        "AUTH_LOGIN_RATE_LIMIT_WINDOW_SECONDS",
+        "60",
+    )
+    auth_registration_rate_limit_attempts = _positive_int(
+        "AUTH_REGISTRATION_RATE_LIMIT_ATTEMPTS",
+        "3",
+    )
+    auth_registration_rate_limit_window_seconds = _positive_int(
+        "AUTH_REGISTRATION_RATE_LIMIT_WINDOW_SECONDS",
+        "60",
+    )
 
     session_cookie_secure = (
         environment.lower() == "production"
@@ -68,6 +93,12 @@ def load_settings() -> Settings:
         session_ttl_seconds=session_ttl_seconds,
         session_cookie_secure=session_cookie_secure,
         session_cookie_samesite=session_cookie_samesite,
+        auth_login_rate_limit_attempts=auth_login_rate_limit_attempts,
+        auth_login_rate_limit_window_seconds=auth_login_rate_limit_window_seconds,
+        auth_registration_rate_limit_attempts=auth_registration_rate_limit_attempts,
+        auth_registration_rate_limit_window_seconds=(
+            auth_registration_rate_limit_window_seconds
+        ),
         database_host=database_host,
         database_port=database_port,
         database_name=database_name,
