@@ -46,6 +46,10 @@ class Incident(Base):
             unique=True,
             postgresql_where=text("status IN ('open', 'acknowledged')"),
         ),
+        Index("ix_incidents_monitor_opened_at", "monitor_id", "opened_at"),
+        Index("ix_incidents_user_opened_at", "user_id", "opened_at"),
+        Index("ix_incidents_triggering_check_id", "triggering_check_id"),
+        Index("ix_incidents_recovery_check_id", "recovery_check_id"),
     )
 
     id: Mapped[UUID] = mapped_column(

@@ -7,6 +7,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     SmallInteger,
     Text,
@@ -68,6 +69,12 @@ class Monitor(Base):
         CheckConstraint(
             "latest_status_code IS NULL OR latest_status_code BETWEEN 100 AND 599",
             name="ck_monitors_latest_status_code",
+        ),
+        Index("ix_monitors_user_id", "user_id"),
+        Index(
+            "ix_monitors_enabled_next_check_at",
+            "next_check_at",
+            postgresql_where=text("is_enabled"),
         ),
     )
 

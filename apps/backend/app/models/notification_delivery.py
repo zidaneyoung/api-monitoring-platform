@@ -6,6 +6,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     Text,
     UniqueConstraint,
@@ -52,6 +53,13 @@ class NotificationDelivery(Base):
             "length(btrim(deduplication_key)) > 0",
             name="ck_notification_deliveries_deduplication_key_nonempty",
         ),
+        CheckConstraint(
+            "next_retry_at IS NULL OR last_attempt_at IS NULL "
+            "OR next_retry_at >= last_attempt_at",
+            name="ck_notification_deliveries_retry_time_order",
+        ),
+        Index("ix_notification_deliveries_user_id", "user_id"),
+        Index("ix_notification_deliveries_incident_id", "incident_id"),
     )
 
     id: Mapped[UUID] = mapped_column(
