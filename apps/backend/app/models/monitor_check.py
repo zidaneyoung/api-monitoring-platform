@@ -39,6 +39,7 @@ class MonitorCheck(Base):
             name="ck_monitor_checks_http_status_code",
         ),
         Index("ix_monitor_checks_monitor_started_at", "monitor_id", "started_at"),
+        Index("ix_monitor_checks_run_id", "run_id"),
     )
 
     id: Mapped[UUID] = mapped_column(

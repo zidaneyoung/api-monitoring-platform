@@ -9,7 +9,9 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 from app.database import Base
 
 if TYPE_CHECKING:
+    from app.models.incident import Incident
     from app.models.monitor import Monitor
+    from app.models.notification_delivery import NotificationDelivery
 
 
 class User(Base):
@@ -48,6 +50,16 @@ class User(Base):
         onupdate=func.now(),
     )
     monitors: Mapped[list["Monitor"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    incidents: Mapped[list["Incident"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    notification_deliveries: Mapped[list["NotificationDelivery"]] = relationship(
         back_populates="user",
         cascade="all, delete-orphan",
         passive_deletes=True,

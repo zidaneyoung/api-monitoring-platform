@@ -7,6 +7,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     SmallInteger,
     Text,
@@ -19,6 +20,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
 if TYPE_CHECKING:
+    from app.models.incident import Incident
     from app.models.monitor_check import MonitorCheck
     from app.models.monitor_run import MonitorRun
     from app.models.user import User
@@ -67,6 +69,12 @@ class Monitor(Base):
         CheckConstraint(
             "latest_status_code IS NULL OR latest_status_code BETWEEN 100 AND 599",
             name="ck_monitors_latest_status_code",
+        ),
+        Index("ix_monitors_user_id", "user_id"),
+        Index(
+            "ix_monitors_enabled_next_check_at",
+            "next_check_at",
+            postgresql_where=text("is_enabled"),
         ),
     )
 
@@ -131,6 +139,11 @@ class Monitor(Base):
         passive_deletes=True,
     )
     checks: Mapped[list["MonitorCheck"]] = relationship(
+        back_populates="monitor",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    incidents: Mapped[list["Incident"]] = relationship(
         back_populates="monitor",
         cascade="all, delete-orphan",
         passive_deletes=True,

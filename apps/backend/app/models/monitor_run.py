@@ -35,6 +35,14 @@ class MonitorRun(Base):
         CheckConstraint(
             "attempt_count >= 0", name="ck_monitor_runs_attempt_count_nonnegative"
         ),
+        CheckConstraint(
+            "started_at IS NULL OR claimed_at IS NULL OR started_at >= claimed_at",
+            name="ck_monitor_runs_claimed_started_order",
+        ),
+        CheckConstraint(
+            "completed_at IS NULL OR started_at IS NULL OR completed_at >= started_at",
+            name="ck_monitor_runs_started_completed_order",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(
