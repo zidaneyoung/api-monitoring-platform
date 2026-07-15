@@ -19,6 +19,7 @@ from app.database import Base
 
 if TYPE_CHECKING:
     from app.models.monitor import Monitor
+    from app.models.monitor_check import MonitorCheck
 
 
 class MonitorRun(Base):
@@ -68,3 +69,4 @@ class MonitorRun(Base):
     )
 
     monitor: Mapped["Monitor"] = relationship(back_populates="runs")
+    checks: Mapped[list["MonitorCheck"]] = relationship(back_populates="run")
