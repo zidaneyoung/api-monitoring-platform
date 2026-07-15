@@ -32,6 +32,19 @@ routes render. Unauthenticated requests are redirected to login with their inten
 path and query in the `next` parameter. The backend remains the authorization
 boundary for every protected data operation.
 
+## Authentication rate limits
+
+Redis holds fixed-window counters shared by all backend instances. Login allows five
+attempts per client address in 60 seconds; registration allows three. The next
+request receives `429 Too Many Requests`, a generic error body, and a `Retry-After`
+header. Requests are accepted again after the window expires. If Redis cannot
+enforce a limit, authentication fails closed with a controlled `503` response.
+
+Keys contain only the route scope and a SHA-256 digest of the resolved client
+address. Submitted email addresses, passwords, cookies, tokens, and request bodies
+are never included in rate-limit keys or logs. Untrusted forwarding headers are not
+used to identify clients.
+
 ## Configuration
 
 - `SESSION_COOKIE_NAME` defaults to `amp_session`.
@@ -40,3 +53,7 @@ boundary for every protected data operation.
 - `SESSION_COOKIE_SECURE` may enable secure cookies outside production; production
   enables them regardless of this value.
 - `SameSite=None` is rejected unless secure cookies are enabled.
+- `AUTH_LOGIN_RATE_LIMIT_ATTEMPTS` defaults to `5`.
+- `AUTH_LOGIN_RATE_LIMIT_WINDOW_SECONDS` defaults to `60`.
+- `AUTH_REGISTRATION_RATE_LIMIT_ATTEMPTS` defaults to `3`.
+- `AUTH_REGISTRATION_RATE_LIMIT_WINDOW_SECONDS` defaults to `60`.

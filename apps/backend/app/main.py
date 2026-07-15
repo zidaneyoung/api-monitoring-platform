@@ -10,6 +10,7 @@ from app.config import load_settings
 from app.database import dispose_database_engine
 from app.health import router as health_router
 from app.routes.auth import router as auth_router
+from app.security.rate_limits import close_rate_limit_store
 from app.security.sessions import close_session_store
 
 
@@ -20,9 +21,12 @@ settings = load_settings()
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     yield
     try:
-        await close_session_store()
+        await close_rate_limit_store()
     finally:
-        await dispose_database_engine()
+        try:
+            await close_session_store()
+        finally:
+            await dispose_database_engine()
 
 
 app = FastAPI(title="API Monitoring Platform Backend", lifespan=lifespan)
