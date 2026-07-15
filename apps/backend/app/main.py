@@ -2,10 +2,14 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 
+from app.api_errors import validation_error_response
 from app.config import load_settings
 from app.database import dispose_database_engine
 from app.health import router as health_router
+from app.routes.auth import router as auth_router
 
 
 settings = load_settings()
@@ -18,7 +22,16 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="API Monitoring Platform Backend", lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[settings.frontend_origin],
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type"],
+)
+app.add_exception_handler(RequestValidationError, validation_error_response)
 app.include_router(health_router)
+app.include_router(auth_router)
 
 
 @app.get("/")

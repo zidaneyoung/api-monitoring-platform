@@ -13,6 +13,7 @@ import type { FormEvent } from "react";
 import { useEffect, useId, useRef, useState } from "react";
 
 import { ThemeToggle } from "@/components/theme-toggle";
+import { registerUser } from "@/lib/auth-api";
 
 type Mode = "login" | "register";
 type Tone = "idle" | "loading" | "success" | "error";
@@ -32,7 +33,7 @@ const COPY = {
     title: "Create your account",
     description: "Start monitoring in minutes.",
     submit: "Create account",
-    success: "Mock registration complete. No account was created.",
+    success: "Account created. You can now log in.",
     statusIntro: "Ready to register",
     alternateLabel: "Already have an account?",
     alternateHref: "/login",
@@ -99,6 +100,7 @@ export function AuthForm({ mode }: { mode: Mode }) {
   const [status, setStatus] = useState(copy.statusIntro);
   const [tone, setTone] = useState<Tone>("idle");
   const [submitAttempted, setSubmitAttempted] = useState(false);
+  const [serverErrors, setServerErrors] = useState({ email: "", password: "" });
 
   useEffect(() => {
     return () => {
@@ -108,8 +110,8 @@ export function AuthForm({ mode }: { mode: Mode }) {
 
   const shouldValidate = (field: keyof typeof touched) => touched[field] || submitAttempted;
   const nameError = isRegister && shouldValidate("name") ? validateName(name) : "";
-  const emailError = shouldValidate("email") ? validateEmail(email) : "";
-  const passwordError = shouldValidate("password") ? validatePassword(password) : "";
+  const emailError = serverErrors.email || (shouldValidate("email") ? validateEmail(email) : "");
+  const passwordError = serverErrors.password || (shouldValidate("password") ? validatePassword(password) : "");
   const confirmError =
     isRegister && shouldValidate("confirm")
       ? !confirmPassword
@@ -122,9 +124,10 @@ export function AuthForm({ mode }: { mode: Mode }) {
     email.trim() && password && (!isRegister || (name.trim() && confirmPassword)),
   );
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSubmitAttempted(true);
+    setServerErrors({ email: "", password: "" });
 
     const hasError = Boolean(
       validateEmail(email) ||
@@ -141,7 +144,30 @@ export function AuthForm({ mode }: { mode: Mode }) {
 
     setIsSubmitting(true);
     setTone("loading");
-    setStatus("Submitting mock request…");
+    setStatus(isRegister ? "Creating account…" : "Submitting mock request…");
+
+    if (isRegister) {
+      const errors = await registerUser(email, password);
+      setIsSubmitting(false);
+
+      if (errors.length > 0) {
+        setServerErrors({
+          email: errors.find((error) => error.field === "email")?.message ?? "",
+          password: errors.find((error) => error.field === "password")?.message ?? "",
+        });
+        setTone("error");
+        setStatus(errors.find((error) => error.field === "form")?.message ?? "Fix the highlighted fields and try again.");
+        return;
+      }
+
+      setTone("success");
+      setStatus(copy.success);
+      setPassword("");
+      setConfirmPassword("");
+      setSubmitAttempted(false);
+      setTouched({ name: false, email: false, password: false, confirm: false });
+      return;
+    }
 
     if (submitTimer.current !== null) window.clearTimeout(submitTimer.current);
     submitTimer.current = window.setTimeout(() => {
@@ -206,7 +232,10 @@ export function AuthForm({ mode }: { mode: Mode }) {
                 autoComplete="email"
                 placeholder="name@company.com"
                 value={email}
-                onChange={(event) => setEmail(event.target.value)}
+                onChange={(event) => {
+                  setEmail(event.target.value);
+                  setServerErrors((current) => ({ ...current, email: "" }));
+                }}
                 onBlur={() => setTouched((current) => ({ ...current, email: true }))}
                 disabled={isSubmitting}
                 aria-invalid={Boolean(emailError)}
@@ -226,7 +255,10 @@ export function AuthForm({ mode }: { mode: Mode }) {
                 autoComplete={isRegister ? "new-password" : "current-password"}
                 placeholder="At least 8 characters"
                 value={password}
-                onChange={(event) => setPassword(event.target.value)}
+                onChange={(event) => {
+                  setPassword(event.target.value);
+                  setServerErrors((current) => ({ ...current, password: "" }));
+                }}
                 onBlur={() => setTouched((current) => ({ ...current, password: true }))}
                 disabled={isSubmitting}
                 aria-invalid={Boolean(passwordError)}

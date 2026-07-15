@@ -7,6 +7,7 @@ from urllib.parse import quote_plus
 class Settings:
     environment: str
     debug: bool
+    frontend_origin: str
     database_host: str
     database_port: int
     database_name: str
@@ -43,6 +44,7 @@ def load_settings() -> Settings:
     return Settings(
         environment=os.getenv("ENVIRONMENT", "development"),
         debug=os.getenv("DEBUG", "false").lower() == "true",
+        frontend_origin=os.getenv("FRONTEND_ORIGIN", "http://localhost:3000"),
         database_host=database_host,
         database_port=database_port,
         database_name=database_name,
