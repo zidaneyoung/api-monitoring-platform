@@ -27,6 +27,11 @@ written to `localStorage` or `sessionStorage`. Backend authorization must use th
 authenticated-session dependency; frontend route checks are only a user-experience
 guard and are not an authorization boundary.
 
+Next.js Proxy verifies the backend session before dashboard, monitor, or incident
+routes render. Unauthenticated requests are redirected to login with their intended
+path and query in the `next` parameter. The backend remains the authorization
+boundary for every protected data operation.
+
 ## Configuration
 
 - `SESSION_COOKIE_NAME` defaults to `amp_session`.
