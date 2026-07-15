@@ -6,3 +6,9 @@ Monitors are owned by exactly one user. Deleting a user deletes that user's moni
 and, through their foreign keys, all monitor execution history. This cascade is the
 intentional account-deletion policy; monitors are not reassigned or retained as
 ownerless records.
+
+## Incident safety
+
+Incident cause categories and messages contain only normalized, user-safe diagnostic
+details. Callers must remove credentials, tokens, response bodies, and other secrets
+before persisting these fields.

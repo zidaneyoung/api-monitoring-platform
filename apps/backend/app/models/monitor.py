@@ -19,6 +19,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
 if TYPE_CHECKING:
+    from app.models.incident import Incident
     from app.models.monitor_check import MonitorCheck
     from app.models.monitor_run import MonitorRun
     from app.models.user import User
@@ -131,6 +132,11 @@ class Monitor(Base):
         passive_deletes=True,
     )
     checks: Mapped[list["MonitorCheck"]] = relationship(
+        back_populates="monitor",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    incidents: Mapped[list["Incident"]] = relationship(
         back_populates="monitor",
         cascade="all, delete-orphan",
         passive_deletes=True,
