@@ -5,10 +5,12 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
 
+from app.security.monitor_urls import MAX_MONITOR_URL_LENGTH, normalize_monitor_url
+
 
 class MonitorCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
-    url: str = Field(min_length=1, max_length=2048)
+    url: str = Field(min_length=1, max_length=MAX_MONITOR_URL_LENGTH)
     http_method: Literal["GET", "HEAD"] = "GET"
     interval_seconds: int = Field(ge=1, le=86_400)
     timeout_seconds: int = Field(ge=1, le=300)
@@ -25,9 +27,7 @@ class MonitorCreate(BaseModel):
     @field_validator("url")
     @classmethod
     def require_http_url(cls, value: str) -> str:
-        if not value.lower().startswith(("http://", "https://")):
-            raise ValueError("monitor URL must use HTTP or HTTPS")
-        return value
+        return normalize_monitor_url(value)
 
     @field_validator("expected_status_max")
     @classmethod

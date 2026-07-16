@@ -10,6 +10,12 @@ from app.database import get_database_session
 from app.models import Monitor
 from app.routes.auth import AuthenticatedSession, require_authenticated_session
 from app.schemas.monitor import MonitorCreate, MonitorListResponse, MonitorResponse
+from app.security.monitor_destinations import (
+    DestinationResolver,
+    DestinationSecurityError,
+    get_destination_resolver,
+    validate_monitor_destination,
+)
 
 
 router = APIRouter(prefix="/monitors", tags=["monitors"])
@@ -91,7 +97,19 @@ async def create_monitor(
     payload: MonitorCreate,
     authenticated: AuthenticatedSession = Depends(require_authenticated_session),
     session: AsyncSession = Depends(get_database_session),
+    destination_resolver: DestinationResolver = Depends(get_destination_resolver),
 ) -> Monitor:
+    try:
+        await validate_monitor_destination(payload.url, destination_resolver)
+    except DestinationSecurityError:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "code": "unsafe_monitor_destination",
+                "message": "Monitor URL must resolve to a public destination.",
+            },
+        ) from None
+
     monitor = Monitor(
         id=uuid4(),
         user_id=authenticated.user.id,
