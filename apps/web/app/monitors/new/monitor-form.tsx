@@ -11,8 +11,10 @@ import { Input } from "@/components/ui/input"
 import {
   createMonitor,
   type MonitorCreatePayload,
+  type MonitorDto,
   type MonitorError,
   type MonitorField,
+  updateMonitor,
 } from "@/lib/monitor-api"
 
 
@@ -22,18 +24,20 @@ function numberValue(formData: FormData, field: MonitorField): number {
   return Number(formData.get(field))
 }
 
-function outcomeMessage(type: string): string {
+function outcomeMessage(type: string, isEditing: boolean): string {
   if (type === "unauthenticated") return "Your session has expired. Sign in and try again."
   if (type === "unavailable") return "Monitor storage is temporarily unavailable. Try again."
   if (type === "timeout") return "The request timed out. Try again."
   if (type === "network_error") return "Unable to reach the service. Check your connection and try again."
-  return "The monitor could not be created. Try again."
+  if (type === "not_found") return "This monitor no longer exists or is not available to your account."
+  return `The monitor could not be ${isEditing ? "updated" : "created"}. Try again.`
 }
 
-export function MonitorForm() {
+export function MonitorForm({ monitor }: { monitor?: MonitorDto }) {
   const router = useRouter()
   const [errors, setErrors] = useState<MonitorError[]>(initialErrors)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const isEditing = monitor !== undefined
 
   const errorFor = (field: MonitorField) => errors.find((error) => error.field === field)
 
@@ -56,17 +60,19 @@ export function MonitorForm() {
 
     setErrors(initialErrors)
     setIsSubmitting(true)
-    const outcome = await createMonitor(payload)
+    const outcome = monitor
+      ? await updateMonitor(monitor.id, payload)
+      : await createMonitor(payload)
     setIsSubmitting(false)
 
     if (outcome.type === "success") {
-      router.push("/monitors")
+      router.push(monitor ? `/monitors/${monitor.id}` : "/monitors")
       router.refresh()
       return
     }
     setErrors(outcome.type === "validation"
       ? outcome.errors
-      : [{ field: "form", message: outcomeMessage(outcome.type) }])
+      : [{ field: "form", message: outcomeMessage(outcome.type, isEditing) }])
   }
 
   return (
@@ -80,17 +86,17 @@ export function MonitorForm() {
           <FieldGroup className="grid gap-5 md:grid-cols-2">
             <Field className="md:col-span-2" data-invalid={Boolean(errorFor("name"))}>
               <FieldLabel htmlFor="monitor-name">Name</FieldLabel>
-              <Input id="monitor-name" name="name" maxLength={200} required aria-invalid={Boolean(errorFor("name"))} />
+              <Input id="monitor-name" name="name" maxLength={200} defaultValue={monitor?.name} required aria-invalid={Boolean(errorFor("name"))} />
               <FieldError>{errorFor("name")?.message}</FieldError>
             </Field>
             <Field className="md:col-span-2" data-invalid={Boolean(errorFor("url"))}>
               <FieldLabel htmlFor="monitor-url">URL</FieldLabel>
-              <Input id="monitor-url" name="url" type="url" maxLength={2048} placeholder="https://example.com/health" required aria-invalid={Boolean(errorFor("url"))} />
+              <Input id="monitor-url" name="url" type="url" maxLength={2048} defaultValue={monitor?.url} placeholder="https://example.com/health" required aria-invalid={Boolean(errorFor("url"))} />
               <FieldError>{errorFor("url")?.message}</FieldError>
             </Field>
             <Field data-invalid={Boolean(errorFor("http_method"))}>
               <FieldLabel htmlFor="monitor-method">HTTP method</FieldLabel>
-              <select id="monitor-method" name="http_method" defaultValue="GET" aria-invalid={Boolean(errorFor("http_method"))} className="h-8 rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50">
+              <select id="monitor-method" name="http_method" defaultValue={monitor?.http_method ?? "GET"} aria-invalid={Boolean(errorFor("http_method"))} className="h-8 rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50">
                 <option value="GET">GET</option>
                 <option value="HEAD">HEAD</option>
               </select>
@@ -98,32 +104,32 @@ export function MonitorForm() {
             </Field>
             <Field data-invalid={Boolean(errorFor("interval_seconds"))}>
               <FieldLabel htmlFor="monitor-interval">Interval (seconds)</FieldLabel>
-              <Input id="monitor-interval" name="interval_seconds" type="number" min={1} max={86400} defaultValue={60} required aria-invalid={Boolean(errorFor("interval_seconds"))} />
+              <Input id="monitor-interval" name="interval_seconds" type="number" min={1} max={86400} defaultValue={monitor?.interval_seconds ?? 60} required aria-invalid={Boolean(errorFor("interval_seconds"))} />
               <FieldError>{errorFor("interval_seconds")?.message}</FieldError>
             </Field>
             <Field data-invalid={Boolean(errorFor("timeout_seconds"))}>
               <FieldLabel htmlFor="monitor-timeout">Timeout (seconds)</FieldLabel>
-              <Input id="monitor-timeout" name="timeout_seconds" type="number" min={1} max={300} defaultValue={10} required aria-invalid={Boolean(errorFor("timeout_seconds"))} />
+              <Input id="monitor-timeout" name="timeout_seconds" type="number" min={1} max={300} defaultValue={monitor?.timeout_seconds ?? 10} required aria-invalid={Boolean(errorFor("timeout_seconds"))} />
               <FieldError>{errorFor("timeout_seconds")?.message}</FieldError>
             </Field>
             <Field data-invalid={Boolean(errorFor("failure_threshold"))}>
               <FieldLabel htmlFor="monitor-failure-threshold">Failure threshold</FieldLabel>
-              <Input id="monitor-failure-threshold" name="failure_threshold" type="number" min={1} max={100} defaultValue={3} required aria-invalid={Boolean(errorFor("failure_threshold"))} />
+              <Input id="monitor-failure-threshold" name="failure_threshold" type="number" min={1} max={100} defaultValue={monitor?.failure_threshold ?? 3} required aria-invalid={Boolean(errorFor("failure_threshold"))} />
               <FieldError>{errorFor("failure_threshold")?.message}</FieldError>
             </Field>
             <Field data-invalid={Boolean(errorFor("recovery_threshold"))}>
               <FieldLabel htmlFor="monitor-recovery-threshold">Recovery threshold</FieldLabel>
-              <Input id="monitor-recovery-threshold" name="recovery_threshold" type="number" min={1} max={100} defaultValue={2} required aria-invalid={Boolean(errorFor("recovery_threshold"))} />
+              <Input id="monitor-recovery-threshold" name="recovery_threshold" type="number" min={1} max={100} defaultValue={monitor?.recovery_threshold ?? 2} required aria-invalid={Boolean(errorFor("recovery_threshold"))} />
               <FieldError>{errorFor("recovery_threshold")?.message}</FieldError>
             </Field>
             <Field data-invalid={Boolean(errorFor("expected_status_min"))}>
               <FieldLabel htmlFor="monitor-status-min">Minimum accepted status</FieldLabel>
-              <Input id="monitor-status-min" name="expected_status_min" type="number" min={100} max={599} defaultValue={200} required aria-invalid={Boolean(errorFor("expected_status_min"))} />
+              <Input id="monitor-status-min" name="expected_status_min" type="number" min={100} max={599} defaultValue={monitor?.expected_status_min ?? 200} required aria-invalid={Boolean(errorFor("expected_status_min"))} />
               <FieldError>{errorFor("expected_status_min")?.message}</FieldError>
             </Field>
             <Field data-invalid={Boolean(errorFor("expected_status_max"))}>
               <FieldLabel htmlFor="monitor-status-max">Maximum accepted status</FieldLabel>
-              <Input id="monitor-status-max" name="expected_status_max" type="number" min={100} max={599} defaultValue={399} required aria-invalid={Boolean(errorFor("expected_status_max"))} />
+              <Input id="monitor-status-max" name="expected_status_max" type="number" min={100} max={599} defaultValue={monitor?.expected_status_max ?? 399} required aria-invalid={Boolean(errorFor("expected_status_max"))} />
               <FieldError>{errorFor("expected_status_max")?.message}</FieldError>
             </Field>
             <Field className="md:col-span-2" data-invalid={Boolean(errorFor("form"))}>
@@ -134,7 +140,9 @@ export function MonitorForm() {
         <CardFooter className="mt-6 justify-end border-t pt-6">
           <Button type="submit" size="lg" disabled={isSubmitting}>
             {isSubmitting ? <Loader2Icon className="animate-spin" data-icon="inline-start" /> : null}
-            {isSubmitting ? "Creating monitor…" : "Create monitor"}
+            {isSubmitting
+              ? `${isEditing ? "Saving changes" : "Creating monitor"}…`
+              : isEditing ? "Save changes" : "Create monitor"}
           </Button>
         </CardFooter>
       </form>

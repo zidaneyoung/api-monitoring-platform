@@ -5,11 +5,8 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
   MoreVerticalIcon,
-  PauseIcon,
   PencilIcon,
-  PlayIcon,
   PlusIcon,
-  Trash2Icon,
 } from "lucide-react"
 import { useEffect, useState } from "react"
 
@@ -19,7 +16,6 @@ import { Button, buttonVariants } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import {
   Dialog,
-  DialogClose,
   DialogContent,
   DialogDescription,
   DialogHeader,
@@ -29,6 +25,8 @@ import {
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { cn } from "@/lib/utils"
 import { listMonitors, type MonitorDto, type MonitorListDto } from "@/lib/monitor-api"
+import { MonitorDeleteButton } from "./monitor-delete-button"
+import { MonitorStateButton } from "./monitor-pause-button"
 
 
 type ListState =
@@ -62,11 +60,19 @@ function statusCode(monitor: MonitorDto): string {
   return monitor.latest_status_code === null ? "—" : String(monitor.latest_status_code)
 }
 
-function MonitorActions({ monitor }: { monitor: MonitorDto }) {
-  const isPaused = monitor.status === "paused"
+function MonitorActions({
+  monitor,
+  onMonitorChange,
+  onMonitorDelete,
+}: {
+  monitor: MonitorDto
+  onMonitorChange: (monitor: MonitorDto) => void
+  onMonitorDelete: (monitorId: string) => void
+}) {
+  const [open, setOpen] = useState(false)
 
   return (
-    <Dialog>
+    <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger
         render={
           <Button
@@ -83,19 +89,14 @@ function MonitorActions({ monitor }: { monitor: MonitorDto }) {
       <DialogContent className="sm:max-w-sm">
         <DialogHeader>
           <DialogTitle>{monitor.name}</DialogTitle>
-          <DialogDescription>Monitor mutations are not available yet.</DialogDescription>
+          <DialogDescription>Edit configuration or pause future checks.</DialogDescription>
         </DialogHeader>
         <div className="grid gap-2">
-          <DialogClose render={<Button className="justify-start" variant="outline" size="lg" disabled />}>
+          <Link className={cn(buttonVariants({ variant: "outline", size: "lg" }), "justify-start")} href={`/monitors/${monitor.id}/edit`}>
             <PencilIcon data-icon="inline-start" />Edit monitor
-          </DialogClose>
-          <DialogClose render={<Button className="justify-start" variant="outline" size="lg" disabled />}>
-            {isPaused ? <PlayIcon data-icon="inline-start" /> : <PauseIcon data-icon="inline-start" />}
-            {isPaused ? "Resume monitor" : "Pause monitor"}
-          </DialogClose>
-          <DialogClose render={<Button className="justify-start" variant="destructive" size="lg" disabled />}>
-            <Trash2Icon data-icon="inline-start" />Delete monitor
-          </DialogClose>
+          </Link>
+          <MonitorStateButton className="justify-start" monitor={monitor} onChanged={(updated) => { onMonitorChange(updated); setOpen(false) }} />
+          <MonitorDeleteButton className="justify-start" monitor={monitor} onDeleted={(monitorId) => { onMonitorDelete(monitorId); setOpen(false) }} />
         </div>
       </DialogContent>
     </Dialog>
@@ -129,6 +130,29 @@ export function MonitorList() {
   const data = state.type === "ready" ? state.data : null
   const firstVisible = data && data.total > 0 ? (data.page - 1) * data.page_size + 1 : 0
   const lastVisible = data ? Math.min(data.page * data.page_size, data.total) : 0
+  const replaceMonitor = (updated: MonitorDto) => setState((current) => current.type === "ready"
+    ? { type: "ready", data: { ...current.data, items: current.data.items.map((monitor) => monitor.id === updated.id ? updated : monitor) } }
+    : current)
+  const removeMonitor = (monitorId: string) => {
+    if (data?.items.length === 1 && data.page > 1) {
+      setState({ type: "loading" })
+      setPage(data.page - 1)
+      return
+    }
+    setState((current) => {
+      if (current.type !== "ready") return current
+      const total = Math.max(0, current.data.total - 1)
+      return {
+        type: "ready",
+        data: {
+          ...current.data,
+          items: current.data.items.filter((monitor) => monitor.id !== monitorId),
+          total,
+          pages: Math.max(1, Math.ceil(total / current.data.page_size)),
+        },
+      }
+    })
+  }
 
   return (
     <main className="relative mx-auto flex w-full max-w-[94rem] flex-col gap-5 overflow-hidden px-4 py-9 sm:px-6 lg:px-10 xl:px-12 xl:py-12">
@@ -191,7 +215,7 @@ export function MonitorList() {
                         <TableCell className="px-2 py-4"><div className="text-sm font-medium text-foreground">{check.label}</div><div className="mt-1 text-sm text-muted-foreground">{check.time}</div></TableCell>
                         <TableCell className="px-2 py-4 text-sm font-medium">{responseTime(monitor)}</TableCell>
                         <TableCell className="px-2 py-4 text-sm font-medium">{statusCode(monitor)}</TableCell>
-                        <TableCell className="px-2 py-4 text-right"><MonitorActions monitor={monitor} /></TableCell>
+                        <TableCell className="px-2 py-4 text-right"><MonitorActions monitor={monitor} onMonitorChange={replaceMonitor} onMonitorDelete={removeMonitor} /></TableCell>
                       </TableRow>
                     )
                   })}
@@ -204,7 +228,7 @@ export function MonitorList() {
                 <article className="flex flex-col gap-4 py-5" key={monitor.id}>
                   <div className="flex items-start justify-between gap-3"><div className="min-w-0"><Link className="font-semibold hover:text-link" href={`/monitors/${monitor.id}`}>{monitor.name}</Link><p className="mt-1 break-all text-xs text-muted-foreground">{monitor.url}</p></div><StatusBadge status={monitor.status} /></div>
                   <dl className="grid grid-cols-3 gap-4"><div><dt className="text-xs text-muted-foreground">Latest check</dt><dd className="mt-1 text-sm font-medium">{latestCheck(monitor).label}</dd></div><div><dt className="text-xs text-muted-foreground">Response time</dt><dd className="mt-1 text-sm font-medium">{responseTime(monitor)}</dd></div><div><dt className="text-xs text-muted-foreground">Status code</dt><dd className="mt-1 text-sm font-medium">{statusCode(monitor)}</dd></div></dl>
-                  <div className="flex justify-end"><MonitorActions monitor={monitor} /></div>
+                  <div className="flex justify-end"><MonitorActions monitor={monitor} onMonitorChange={replaceMonitor} onMonitorDelete={removeMonitor} /></div>
                 </article>
               ))}
             </div>

@@ -70,6 +70,8 @@ describe("MonitorList", () => {
     expect(screen.getAllByText("204").length).toBeGreaterThan(0)
     expect(screen.getAllByText("Not checked yet").length).toBeGreaterThan(0)
     expect(screen.queryByText("Checkout")).toBeNull()
+    fireEvent.click(screen.getAllByRole("button", { name: "Actions for Owner unknown API" })[0])
+    expect((await screen.findByRole("link", { name: "Edit monitor" })).getAttribute("href")).toBe("/monitors/monitor-unknown/edit")
   })
 
   it("renders the backend empty state", async () => {
@@ -99,5 +101,20 @@ describe("MonitorList", () => {
     fireEvent.click(screen.getByRole("button", { name: "Next page" }))
     expect((await screen.findAllByText("Owner paused API")).length).toBeGreaterThan(0)
     expect(fetchMock.mock.calls[1]?.[0]).toBe("http://localhost:8000/monitors?page=2&page_size=10")
+  })
+
+  it("confirms deletion and removes the monitor from the active list", async () => {
+    vi.stubGlobal("confirm", vi.fn(() => true))
+    fetchMock
+      .mockResolvedValueOnce(responsePage({ items: [unknownMonitor], total: 1 }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+    render(<MonitorList />)
+
+    expect((await screen.findAllByText("Owner unknown API")).length).toBeGreaterThan(0)
+    fireEvent.click(screen.getAllByRole("button", { name: "Actions for Owner unknown API" })[0])
+    fireEvent.click(await screen.findByRole("button", { name: "Delete monitor" }))
+    expect(await screen.findByText("No monitors yet")).toBeTruthy()
+    expect(screen.queryByText("Owner unknown API")).toBeNull()
+    expect(fetchMock.mock.calls[1]?.[0]).toBe("http://localhost:8000/monitors/monitor-unknown")
   })
 })

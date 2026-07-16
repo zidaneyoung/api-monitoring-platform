@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react"
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { MonitorDetails } from "./monitor-details"
@@ -6,6 +6,11 @@ import type { MonitorDto } from "@/lib/monitor-api"
 
 
 const fetchMock = vi.fn()
+const navigationMock = vi.hoisted(() => ({ push: vi.fn(), refresh: vi.fn() }))
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => navigationMock,
+}))
 
 const monitor: MonitorDto = {
   id: "monitor-owned",
@@ -28,6 +33,8 @@ const monitor: MonitorDto = {
 beforeEach(() => {
   vi.stubGlobal("fetch", fetchMock)
   fetchMock.mockReset()
+  navigationMock.push.mockReset()
+  navigationMock.refresh.mockReset()
 })
 
 afterEach(() => {
@@ -49,6 +56,7 @@ describe("MonitorDetails", () => {
     expect(screen.getByText("125 ms")).toBeTruthy()
     expect(screen.getByText("204")).toBeTruthy()
     expect(screen.getByText("No check history loaded.")).toBeTruthy()
+    expect(screen.getByRole("link", { name: "Edit" }).getAttribute("href")).toBe("/monitors/monitor-owned/edit")
     expect(screen.queryByText(/mock/i)).toBeNull()
   })
 
@@ -69,5 +77,53 @@ describe("MonitorDetails", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Try again" }))
     expect(await screen.findByText("Owned details API")).toBeTruthy()
     expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it("confirms pause and immediately renders the persisted paused state", async () => {
+    vi.stubGlobal("confirm", vi.fn(() => true))
+    fetchMock
+      .mockResolvedValueOnce(new Response(JSON.stringify(monitor), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        ...monitor,
+        status: "paused",
+        next_check_at: null,
+      }), { status: 200 }))
+    render(<MonitorDetails monitorId={monitor.id} />)
+
+    fireEvent.click(await screen.findByRole("button", { name: "Pause monitor" }))
+    const resume = await screen.findByRole("button", { name: "Resume monitor" })
+    expect(resume.hasAttribute("disabled")).toBe(false)
+    expect(fetchMock.mock.calls[1]?.[0]).toBe("http://localhost:8000/monitors/monitor-owned/pause")
+  })
+
+  it("resumes and immediately renders an active future schedule", async () => {
+    const paused = { ...monitor, status: "paused", next_check_at: null }
+    const resumed = {
+      ...monitor,
+      status: "unknown",
+      next_check_at: "2026-07-16T20:01:00Z",
+    }
+    fetchMock
+      .mockResolvedValueOnce(new Response(JSON.stringify(paused), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(resumed), { status: 200 }))
+    render(<MonitorDetails monitorId={monitor.id} />)
+
+    fireEvent.click(await screen.findByRole("button", { name: "Resume monitor" }))
+    expect(await screen.findByRole("button", { name: "Pause monitor" })).toBeTruthy()
+    expect(screen.getAllByText("Unknown").length).toBeGreaterThan(0)
+    expect(fetchMock.mock.calls[1]?.[0]).toBe("http://localhost:8000/monitors/monitor-owned/resume")
+  })
+
+  it("confirms permanent deletion and returns to the active list", async () => {
+    vi.stubGlobal("confirm", vi.fn(() => true))
+    fetchMock
+      .mockResolvedValueOnce(new Response(JSON.stringify(monitor), { status: 200 }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+    render(<MonitorDetails monitorId={monitor.id} />)
+
+    fireEvent.click(await screen.findByRole("button", { name: "Delete monitor" }))
+    await waitFor(() => expect(navigationMock.push).toHaveBeenCalledWith("/monitors"))
+    expect(navigationMock.refresh).toHaveBeenCalledOnce()
+    expect(fetchMock.mock.calls[1]?.[0]).toBe("http://localhost:8000/monitors/monitor-owned")
   })
 })

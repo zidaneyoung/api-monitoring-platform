@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 
-import { createMonitor, getMonitor, listMonitors, type MonitorCreatePayload } from "@/lib/monitor-api"
+import { createMonitor, deleteMonitor, getMonitor, listMonitors, pauseMonitor, resumeMonitor, updateMonitor, type MonitorCreatePayload } from "@/lib/monitor-api"
 
 
 const payload: MonitorCreatePayload = {
@@ -85,6 +85,36 @@ describe("createMonitor", () => {
   })
 })
 
+describe("updateMonitor", () => {
+  it("updates one monitor with the complete validated configuration", async () => {
+    const updated = { ...responseMonitor, name: "Updated API", interval_seconds: 300 }
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      JSON.stringify(updated),
+      { status: 200 },
+    ))
+    vi.stubGlobal("fetch", fetchMock)
+
+    await expect(updateMonitor("monitor/one", payload)).resolves.toEqual({
+      type: "success",
+      data: updated,
+    })
+    const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe("http://localhost:8000/monitors/monitor%2Fone")
+    expect(options.method).toBe("PUT")
+    expect(options.credentials).toBe("include")
+    expect(options.body).toBe(JSON.stringify(payload))
+  })
+
+  it.each([
+    [404, { type: "not_found" }],
+    [401, { type: "unauthenticated" }],
+    [503, { type: "unavailable" }],
+  ])("maps update status %s to a controlled outcome", async (status, expected) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status })))
+    await expect(updateMonitor("monitor-1", payload)).resolves.toEqual(expected)
+  })
+})
+
 describe("listMonitors", () => {
   it("returns authenticated paginated monitor data", async () => {
     const page = { items: [responseMonitor], page: 2, page_size: 5, total: 6, pages: 2 }
@@ -138,5 +168,75 @@ describe("getMonitor", () => {
   ])("maps detail status %s to a controlled outcome", async (status, expected) => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status })))
     await expect(getMonitor("monitor-1")).resolves.toEqual(expected)
+  })
+})
+
+describe("pauseMonitor", () => {
+  it("pauses one monitor without sending configuration data", async () => {
+    const paused = { ...responseMonitor, status: "paused", next_check_at: null }
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(paused), { status: 200 }))
+    vi.stubGlobal("fetch", fetchMock)
+
+    await expect(pauseMonitor("monitor/one")).resolves.toEqual({ type: "success", data: paused })
+    const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe("http://localhost:8000/monitors/monitor%2Fone/pause")
+    expect(options.method).toBe("POST")
+    expect(options.credentials).toBe("include")
+    expect(options.body).toBeUndefined()
+  })
+
+  it.each([
+    [404, { type: "not_found" }],
+    [401, { type: "unauthenticated" }],
+    [503, { type: "unavailable" }],
+  ])("maps pause status %s to a controlled outcome", async (status, expected) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status })))
+    await expect(pauseMonitor("monitor-1")).resolves.toEqual(expected)
+  })
+})
+
+describe("resumeMonitor", () => {
+  it("resumes one monitor without creating a client-side run", async () => {
+    const resumed = { ...responseMonitor, status: "unknown", next_check_at: "2026-07-16T20:00:00Z" }
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(resumed), { status: 200 }))
+    vi.stubGlobal("fetch", fetchMock)
+
+    await expect(resumeMonitor("monitor/one")).resolves.toEqual({ type: "success", data: resumed })
+    const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe("http://localhost:8000/monitors/monitor%2Fone/resume")
+    expect(options.method).toBe("POST")
+    expect(options.body).toBeUndefined()
+  })
+
+  it.each([
+    [404, { type: "not_found" }],
+    [401, { type: "unauthenticated" }],
+    [503, { type: "unavailable" }],
+  ])("maps resume status %s to a controlled outcome", async (status, expected) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status })))
+    await expect(resumeMonitor("monitor-1")).resolves.toEqual(expected)
+  })
+})
+
+describe("deleteMonitor", () => {
+  it("deletes one monitor without sending a request body", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }))
+    vi.stubGlobal("fetch", fetchMock)
+
+    await expect(deleteMonitor("monitor/one")).resolves.toEqual({ type: "success", data: null })
+    const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe("http://localhost:8000/monitors/monitor%2Fone")
+    expect(options.method).toBe("DELETE")
+    expect(options.credentials).toBe("include")
+    expect(options.body).toBeUndefined()
+  })
+
+  it.each([
+    [404, { type: "not_found" }],
+    [401, { type: "unauthenticated" }],
+    [503, { type: "unavailable" }],
+  ])("maps delete status %s to a controlled outcome", async (status, expected) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status })))
+    await expect(deleteMonitor("monitor-1")).resolves.toEqual(expected)
   })
 })
