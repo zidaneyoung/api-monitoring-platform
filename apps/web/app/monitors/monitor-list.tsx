@@ -26,7 +26,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { cn } from "@/lib/utils"
 import { listMonitors, type MonitorDto, type MonitorListDto } from "@/lib/monitor-api"
 import { MonitorDeleteButton } from "./monitor-delete-button"
-import { MonitorStateButton } from "./monitor-pause-button"
+import { MonitorStateButton, type MonitorMutationAction } from "./monitor-pause-button"
 
 
 type ListState =
@@ -70,9 +70,12 @@ function MonitorActions({
   onMonitorDelete: (monitorId: string) => void
 }) {
   const [open, setOpen] = useState(false)
+  const [pendingMutation, setPendingMutation] = useState<MonitorMutationAction | null>(null)
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={(nextOpen) => {
+      if (pendingMutation === null) setOpen(nextOpen)
+    }}>
       <DialogTrigger
         render={
           <Button
@@ -95,8 +98,20 @@ function MonitorActions({
           <Link className={cn(buttonVariants({ variant: "outline", size: "lg" }), "justify-start")} href={`/monitors/${monitor.id}/edit`}>
             <PencilIcon data-icon="inline-start" />Edit monitor
           </Link>
-          <MonitorStateButton className="justify-start" monitor={monitor} onChanged={(updated) => { onMonitorChange(updated); setOpen(false) }} />
-          <MonitorDeleteButton className="justify-start" monitor={monitor} onDeleted={(monitorId) => { onMonitorDelete(monitorId); setOpen(false) }} />
+          <MonitorStateButton
+            className="justify-start"
+            monitor={monitor}
+            pendingAction={pendingMutation}
+            onPendingActionChange={setPendingMutation}
+            onChanged={(updated) => { onMonitorChange(updated); setOpen(false) }}
+          />
+          <MonitorDeleteButton
+            className="justify-start"
+            monitor={monitor}
+            pendingAction={pendingMutation}
+            onPendingActionChange={setPendingMutation}
+            onDeleted={(monitorId) => { onMonitorDelete(monitorId); setOpen(false) }}
+          />
         </div>
       </DialogContent>
     </Dialog>

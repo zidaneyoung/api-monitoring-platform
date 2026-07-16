@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { MonitorDetails } from "./monitor-details"
@@ -80,7 +80,6 @@ describe("MonitorDetails", () => {
   })
 
   it("confirms pause and immediately renders the persisted paused state", async () => {
-    vi.stubGlobal("confirm", vi.fn(() => true))
     fetchMock
       .mockResolvedValueOnce(new Response(JSON.stringify(monitor), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({
@@ -91,6 +90,7 @@ describe("MonitorDetails", () => {
     render(<MonitorDetails monitorId={monitor.id} />)
 
     fireEvent.click(await screen.findByRole("button", { name: "Pause monitor" }))
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Pause Owned details API?" })).getByRole("button", { name: "Pause monitor" }))
     const resume = await screen.findByRole("button", { name: "Resume monitor" })
     expect(resume.hasAttribute("disabled")).toBe(false)
     expect(fetchMock.mock.calls[1]?.[0]).toBe("http://localhost:8000/monitors/monitor-owned/pause")
@@ -109,21 +109,43 @@ describe("MonitorDetails", () => {
     render(<MonitorDetails monitorId={monitor.id} />)
 
     fireEvent.click(await screen.findByRole("button", { name: "Resume monitor" }))
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Resume Owned details API?" })).getByRole("button", { name: "Resume monitor" }))
     expect(await screen.findByRole("button", { name: "Pause monitor" })).toBeTruthy()
     expect(screen.getAllByText("Unknown").length).toBeGreaterThan(0)
     expect(fetchMock.mock.calls[1]?.[0]).toBe("http://localhost:8000/monitors/monitor-owned/resume")
   })
 
   it("confirms permanent deletion and returns to the active list", async () => {
-    vi.stubGlobal("confirm", vi.fn(() => true))
     fetchMock
       .mockResolvedValueOnce(new Response(JSON.stringify(monitor), { status: 200 }))
       .mockResolvedValueOnce(new Response(null, { status: 204 }))
     render(<MonitorDetails monitorId={monitor.id} />)
 
     fireEvent.click(await screen.findByRole("button", { name: "Delete monitor" }))
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Permanently delete Owned details API?" })).getByRole("button", { name: "Delete permanently" }))
     await waitFor(() => expect(navigationMock.push).toHaveBeenCalledWith("/monitors"))
     expect(navigationMock.refresh).toHaveBeenCalledOnce()
     expect(fetchMock.mock.calls[1]?.[0]).toBe("http://localhost:8000/monitors/monitor-owned")
+  })
+
+  it("prevents a conflicting delete while a pause request is pending", async () => {
+    let finishPause: (response: Response) => void = () => undefined
+    fetchMock
+      .mockResolvedValueOnce(new Response(JSON.stringify(monitor), { status: 200 }))
+      .mockReturnValueOnce(new Promise<Response>((resolve) => { finishPause = resolve }))
+    render(<MonitorDetails monitorId={monitor.id} />)
+
+    fireEvent.click(await screen.findByRole("button", { name: "Pause monitor" }))
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Pause Owned details API?" })).getByRole("button", { name: "Pause monitor" }))
+
+    expect(screen.getByRole("button", { name: "Delete monitor", hidden: true }).hasAttribute("disabled")).toBe(true)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+
+    await act(async () => finishPause(new Response(JSON.stringify({
+      ...monitor,
+      status: "paused",
+      next_check_at: null,
+    }), { status: 200 })))
+    expect(await screen.findByRole("button", { name: "Resume monitor" })).toBeTruthy()
   })
 })

@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { MonitorDeleteButton } from "./monitor-delete-button"
@@ -37,34 +37,65 @@ afterEach(() => {
 })
 
 describe("MonitorDeleteButton", () => {
-  it("cancels without deleting or changing UI state", () => {
-    vi.stubGlobal("confirm", vi.fn(() => false))
+  it("cancels without deleting and returns focus to the trigger", async () => {
     render(<MonitorDeleteButton monitor={monitor} onDeleted={onDeleted} />)
+    const trigger = screen.getByRole("button", { name: "Delete monitor" })
 
-    fireEvent.click(screen.getByRole("button", { name: "Delete monitor" }))
+    fireEvent.click(trigger)
+    const dialog = screen.getByRole("dialog", { name: "Permanently delete Public API?" })
+    expect(within(dialog).getByText(/related checks and incident history/)).toBeTruthy()
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }))
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull())
     expect(fetchMock).not.toHaveBeenCalled()
     expect(onDeleted).not.toHaveBeenCalled()
+    expect(document.activeElement).toBe(trigger)
   })
 
-  it("warns about history and reports a successful permanent delete", async () => {
-    const confirmMock = vi.fn(() => true)
-    vi.stubGlobal("confirm", confirmMock)
-    fetchMock.mockResolvedValue(new Response(null, { status: 204 }))
+  it("closes with Escape without deleting", async () => {
+    render(<MonitorDeleteButton monitor={monitor} onDeleted={onDeleted} />)
+    fireEvent.click(screen.getByRole("button", { name: "Delete monitor" }))
+    expect(screen.getByRole("dialog", { name: "Permanently delete Public API?" })).toBeTruthy()
+
+    fireEvent.keyDown(document, { key: "Escape", code: "Escape" })
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull())
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it("deletes once, shows pending text, announces success, then completes", async () => {
+    let finishRequest: (response: Response) => void = () => undefined
+    fetchMock.mockReturnValue(new Promise<Response>((resolve) => { finishRequest = resolve }))
     render(<MonitorDeleteButton monitor={monitor} onDeleted={onDeleted} />)
 
     fireEvent.click(screen.getByRole("button", { name: "Delete monitor" }))
-    await waitFor(() => expect(onDeleted).toHaveBeenCalledWith("monitor-1"))
-    expect(confirmMock).toHaveBeenCalledWith(expect.stringContaining("checks and incident history"))
+    const dialog = screen.getByRole("dialog", { name: "Permanently delete Public API?" })
+    const confirm = within(dialog).getByRole("button", { name: "Delete permanently" })
+    fireEvent.click(confirm)
+    fireEvent.click(confirm)
+
     expect(fetchMock).toHaveBeenCalledOnce()
+    expect(within(dialog).getByRole("button", { name: "Deleting…" }).hasAttribute("disabled")).toBe(true)
+    expect(screen.getByRole("button", { name: "Delete monitor", hidden: true }).hasAttribute("disabled")).toBe(true)
+
+    await act(async () => finishRequest(new Response(null, { status: 204 })))
+    expect((await screen.findByRole("status")).textContent).toBe("Public API deleted.")
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull())
+    expect(onDeleted).not.toHaveBeenCalled()
+    await waitFor(() => expect(onDeleted).toHaveBeenCalledWith("monitor-1"))
   })
 
-  it("shows a controlled error and remains retryable", async () => {
-    vi.stubGlobal("confirm", vi.fn(() => true))
+  it("keeps a failed deletion visible and explicitly retryable", async () => {
     fetchMock.mockResolvedValue(new Response(null, { status: 503 }))
     render(<MonitorDeleteButton monitor={monitor} onDeleted={onDeleted} />)
 
     fireEvent.click(screen.getByRole("button", { name: "Delete monitor" }))
-    expect(await screen.findByText("The monitor could not be deleted. Try again.")).toBeTruthy()
-    expect(screen.getByRole("button", { name: "Delete monitor" }).hasAttribute("disabled")).toBe(false)
+    const dialog = screen.getByRole("dialog", { name: "Permanently delete Public API?" })
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete permanently" }))
+
+    expect(await within(dialog).findByText("The monitor could not be deleted. Try again.")).toBeTruthy()
+    expect(onDeleted).not.toHaveBeenCalled()
+    expect(within(dialog).getByRole("button", { name: "Delete permanently" }).hasAttribute("disabled")).toBe(false)
+    expect(screen.getByRole("button", { name: "Delete monitor", hidden: true }).hasAttribute("disabled")).toBe(false)
   })
 })
