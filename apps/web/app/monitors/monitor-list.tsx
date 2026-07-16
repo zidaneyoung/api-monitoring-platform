@@ -110,11 +110,11 @@ export function MonitorList() {
 
   useEffect(() => {
     let cancelled = false
-    setState({ type: "loading" })
     void listMonitors(page, pageSize).then((outcome) => {
       if (cancelled) return
       if (outcome.type === "success") {
         if (page > outcome.data.pages) {
+          setState({ type: "loading" })
           setPage(outcome.data.pages)
           return
         }
@@ -148,7 +148,7 @@ export function MonitorList() {
         <ErrorState
           title="Unable to load monitors"
           description="Monitor data could not be loaded. Retry the request."
-          action={<Button variant="outline" type="button" onClick={() => setRequestVersion((value) => value + 1)}>Try again</Button>}
+          action={<Button variant="outline" type="button" onClick={() => { setState({ type: "loading" }); setRequestVersion((value) => value + 1) }}>Try again</Button>}
         />
       ) : null}
       {data && data.total === 0 ? (
@@ -213,12 +213,12 @@ export function MonitorList() {
             <p className="text-sm text-muted-foreground">Showing {firstVisible} to {lastVisible} of {data.total} monitors</p>
             <div className="flex flex-wrap items-center gap-5">
               <div className="flex items-center gap-2">
-                <Button variant="outline" size="icon-lg" type="button" disabled={data.page === 1} onClick={() => setPage((value) => Math.max(1, value - 1))} aria-label="Previous page"><ChevronLeftIcon /></Button>
+                <Button variant="outline" size="icon-lg" type="button" disabled={data.page === 1} onClick={() => { setState({ type: "loading" }); setPage((value) => Math.max(1, value - 1)) }} aria-label="Previous page"><ChevronLeftIcon /></Button>
                 <Button className="border-primary/50 bg-primary/10 text-primary hover:bg-primary/15" variant="outline" size="icon-lg" type="button" aria-current="page">{data.page}</Button>
-                <Button variant="outline" size="icon-lg" type="button" disabled={data.page === data.pages} onClick={() => setPage((value) => Math.min(data.pages, value + 1))} aria-label="Next page"><ChevronRightIcon /></Button>
+                <Button variant="outline" size="icon-lg" type="button" disabled={data.page === data.pages} onClick={() => { setState({ type: "loading" }); setPage((value) => Math.min(data.pages, value + 1)) }} aria-label="Next page"><ChevronRightIcon /></Button>
               </div>
               <label className="sr-only" htmlFor="monitor-page-size">Rows per page</label>
-              <select id="monitor-page-size" value={pageSize} onChange={(event) => { setPageSize(Number(event.target.value)); setPage(1) }} className="h-11 rounded-lg border border-input bg-card px-4 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50">
+              <select id="monitor-page-size" value={pageSize} onChange={(event) => { setState({ type: "loading" }); setPageSize(Number(event.target.value)); setPage(1) }} className="h-11 rounded-lg border border-input bg-card px-4 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50">
                 <option value="5">5 / page</option><option value="10">10 / page</option><option value="25">25 / page</option>
               </select>
             </div>

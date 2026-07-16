@@ -11,10 +11,10 @@ import { getMonitor, type MonitorDto } from "@/lib/monitor-api"
 
 
 type DetailsState =
-  | { type: "loading" }
-  | { type: "not_found" }
-  | { type: "error" }
-  | { type: "ready"; monitor: MonitorDto }
+  | { type: "loading"; monitorId: string }
+  | { type: "not_found"; monitorId: string }
+  | { type: "error"; monitorId: string }
+  | { type: "ready"; monitorId: string; monitor: MonitorDto }
 
 const dateFormatter = new Intl.DateTimeFormat("en-US", {
   dateStyle: "medium",
@@ -118,22 +118,21 @@ function DetailsContent({ monitor }: { monitor: MonitorDto }) {
 
 export function MonitorDetails({ monitorId }: { monitorId: string }) {
   const [requestVersion, setRequestVersion] = useState(0)
-  const [state, setState] = useState<DetailsState>({ type: "loading" })
+  const [state, setState] = useState<DetailsState>({ type: "loading", monitorId })
 
   useEffect(() => {
     let cancelled = false
-    setState({ type: "loading" })
     void getMonitor(monitorId).then((outcome) => {
       if (cancelled) return
-      if (outcome.type === "success") setState({ type: "ready", monitor: outcome.data })
-      else if (outcome.type === "not_found") setState({ type: "not_found" })
-      else setState({ type: "error" })
+      if (outcome.type === "success") setState({ type: "ready", monitorId, monitor: outcome.data })
+      else if (outcome.type === "not_found") setState({ type: "not_found", monitorId })
+      else setState({ type: "error", monitorId })
     })
     return () => { cancelled = true }
   }, [monitorId, requestVersion])
 
-  if (state.type === "loading") return <LoadingDetails />
+  if (state.type === "loading" || state.monitorId !== monitorId) return <LoadingDetails />
   if (state.type === "not_found") return <MessageDetails title="Monitor not found" description="This monitor does not exist or is not available to your account." />
-  if (state.type === "error") return <MessageDetails title="Unable to display monitor" description="Monitor details could not be loaded. Try again." retry={() => setRequestVersion((value) => value + 1)} />
+  if (state.type === "error") return <MessageDetails title="Unable to display monitor" description="Monitor details could not be loaded. Try again." retry={() => { setState({ type: "loading", monitorId }); setRequestVersion((value) => value + 1) }} />
   return <DetailsContent monitor={state.monitor} />
 }
