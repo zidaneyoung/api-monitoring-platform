@@ -10,6 +10,7 @@ from app.config import load_settings
 from app.database import dispose_database_engine
 from app.health import router as health_router
 from app.routes.auth import router as auth_router
+from app.routes.monitors import router as monitors_router
 from app.security.rate_limits import close_rate_limit_store
 from app.security.sessions import close_session_store
 
@@ -40,6 +41,7 @@ app.add_middleware(
 app.add_exception_handler(RequestValidationError, validation_error_response)
 app.include_router(health_router)
 app.include_router(auth_router)
+app.include_router(monitors_router)
 
 
 @app.middleware("http")
