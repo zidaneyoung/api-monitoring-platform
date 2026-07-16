@@ -1,11 +1,18 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 
-import { getCurrentUser, logoutUser, safeAuthRedirect } from "@/lib/auth-api"
+import {
+  getCurrentUser,
+  loginUser,
+  logoutUser,
+  registerUser,
+  safeAuthRedirect,
+} from "@/lib/auth-api"
 
 
 afterEach(() => {
   localStorage.clear()
   sessionStorage.clear()
+  vi.restoreAllMocks()
   vi.unstubAllGlobals()
 })
 
@@ -19,6 +26,27 @@ describe("safeAuthRedirect", () => {
     ["/monitors/123?tab=checks", "/monitors/123?tab=checks"],
   ])("maps %s to %s", (destination, expected) => {
     expect(safeAuthRedirect(destination)).toBe(expected)
+  })
+})
+
+describe("authentication request timeout", () => {
+  it.each([
+    ["login", loginUser],
+    ["registration", registerUser],
+  ])("stops a stalled %s request with a safe error", async (_label, request) => {
+    const controller = new AbortController()
+    const timeoutMock = vi.spyOn(AbortSignal, "timeout").mockReturnValue(controller.signal)
+    vi.stubGlobal("fetch", vi.fn((_url: string, options: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      options.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")))
+    })))
+
+    const result = request("user@example.com", "monitor123")
+    controller.abort()
+
+    await expect(result).resolves.toEqual([
+      { field: "form", message: "Unable to reach the service. Try again." },
+    ])
+    expect(timeoutMock).toHaveBeenCalledWith(10_000)
   })
 })
 
@@ -38,6 +66,7 @@ describe("getCurrentUser", () => {
     for (const [, options] of fetchMock.mock.calls as [string, RequestInit][]) {
       expect(options.credentials).toBe("include")
       expect(options.cache).toBe("no-store")
+      expect(options.signal).toBeInstanceOf(AbortSignal)
     }
     expect(localStorage.length).toBe(0)
     expect(sessionStorage.length).toBe(0)
@@ -49,6 +78,20 @@ describe("getCurrentUser", () => {
     }), { status: 401 })))
 
     expect(await getCurrentUser()).toBeNull()
+  })
+
+  it("stops a stalled current-user request after five seconds", async () => {
+    const controller = new AbortController()
+    const timeoutMock = vi.spyOn(AbortSignal, "timeout").mockReturnValue(controller.signal)
+    vi.stubGlobal("fetch", vi.fn((_url: string, options: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      options.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")))
+    })))
+
+    const result = getCurrentUser()
+    controller.abort()
+
+    await expect(result).resolves.toBeNull()
+    expect(timeoutMock).toHaveBeenCalledWith(5_000)
   })
 })
 
@@ -65,6 +108,7 @@ describe("logoutUser", () => {
         method: "POST",
         credentials: "include",
         cache: "no-store",
+        signal: expect.any(AbortSignal),
       },
     )
   })
@@ -76,5 +120,19 @@ describe("logoutUser", () => {
     vi.stubGlobal("fetch", fetchMock)
 
     await expect(logoutUser()).rejects.toThrow("Unable to log out. Try again.")
+  })
+
+  it("stops a stalled logout request after five seconds", async () => {
+    const controller = new AbortController()
+    const timeoutMock = vi.spyOn(AbortSignal, "timeout").mockReturnValue(controller.signal)
+    vi.stubGlobal("fetch", vi.fn((_url: string, options: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      options.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")))
+    })))
+
+    const result = logoutUser()
+    controller.abort()
+
+    await expect(result).rejects.toThrow("Unable to log out. Try again.")
+    expect(timeoutMock).toHaveBeenCalledWith(5_000)
   })
 })

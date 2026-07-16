@@ -16,6 +16,8 @@ type ErrorPayload = {
 }
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000"
+const AUTH_REQUEST_TIMEOUT_MS = 10_000
+const AUTH_STATE_TIMEOUT_MS = 5_000
 
 function normalizeField(field: string | undefined): AuthField {
   return field === "email" || field === "password" ? field : "form"
@@ -53,6 +55,7 @@ export async function registerUser(email: string, password: string): Promise<Aut
       credentials: "include",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email, password }),
+      signal: AbortSignal.timeout(AUTH_REQUEST_TIMEOUT_MS),
     })
 
     return response.ok ? [] : readErrors(response)
@@ -68,6 +71,7 @@ export async function loginUser(email: string, password: string): Promise<AuthEr
       credentials: "include",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email, password }),
+      signal: AbortSignal.timeout(AUTH_REQUEST_TIMEOUT_MS),
     })
 
     return response.ok ? [] : readErrors(response)
@@ -99,6 +103,7 @@ export async function getCurrentUser(): Promise<CurrentUser | null> {
       method: "GET",
       credentials: "include",
       cache: "no-store",
+      signal: AbortSignal.timeout(AUTH_STATE_TIMEOUT_MS),
     })
 
     return response.ok ? (await response.json()) as CurrentUser : null
@@ -113,6 +118,7 @@ export async function logoutUser(): Promise<void> {
       method: "POST",
       credentials: "include",
       cache: "no-store",
+      signal: AbortSignal.timeout(AUTH_STATE_TIMEOUT_MS),
     })
 
     if (response.ok) return
