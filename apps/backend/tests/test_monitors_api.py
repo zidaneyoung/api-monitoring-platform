@@ -197,6 +197,10 @@ def test_monitor_creation_requires_authentication() -> None:
         ({"name": ""}, "name"),
         ({"url": ""}, "url"),
         ({"url": "ftp://example.com"}, "url"),
+        ({"url": "https://user:secret@example.com"}, "url"),
+        ({"url": "https:///missing-host"}, "url"),
+        ({"url": "https://example.com:99999"}, "url"),
+        ({"url": "https://example.com/" + "a" * 2030}, "url"),
         ({"http_method": "POST"}, "http_method"),
         ({"interval_seconds": 0}, "interval_seconds"),
         ({"interval_seconds": 86_401}, "interval_seconds"),
@@ -255,6 +259,24 @@ def test_monitor_creation_requires_name_and_url(required_field: str) -> None:
             ),
         }
     ]
+
+
+def test_monitor_creation_persists_normalized_url() -> None:
+    owner, _ = asyncio.run(reset_users_and_create_two())
+    app.dependency_overrides[get_database_session] = override_database_session
+    app.dependency_overrides[require_authenticated_session] = authenticated_as(owner)
+    payload = {**VALID_MONITOR, "url": " HTTPS://BÜCHER.example/Health?ready=1 "}
+    try:
+        with TestClient(app) as client:
+            response = client.post("/monitors", json=payload)
+    finally:
+        app.dependency_overrides.pop(get_database_session, None)
+        app.dependency_overrides.pop(require_authenticated_session, None)
+
+    assert response.status_code == 201
+    assert response.json()["url"] == "https://xn--bcher-kva.example/Health?ready=1"
+    monitor = asyncio.run(stored_monitor(UUID(response.json()["id"])))
+    assert monitor.url == "https://xn--bcher-kva.example/Health?ready=1"
 
 
 class FailingDatabaseSession:
