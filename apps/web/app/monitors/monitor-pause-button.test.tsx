@@ -131,4 +131,21 @@ describe("MonitorStateButton", () => {
     expect(fetchMock.mock.calls[0]?.[0]).toBe("http://localhost:8000/monitors/monitor-1/resume")
     expect(onChanged).toHaveBeenCalledWith(resumed)
   })
+
+  it("ignores a state response after its monitor UI is superseded", async () => {
+    let finishRequest: (response: Response) => void = () => undefined
+    fetchMock.mockReturnValue(new Promise<Response>((resolve) => { finishRequest = resolve }))
+    const { unmount } = render(<MonitorStateButton monitor={monitor} onChanged={onChanged} />)
+
+    fireEvent.click(screen.getByRole("button", { name: "Pause monitor" }))
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Pause monitor" }))
+    unmount()
+    await act(async () => finishRequest(new Response(JSON.stringify({
+      ...monitor,
+      status: "paused",
+      next_check_at: null,
+    }), { status: 200 })))
+
+    expect(onChanged).not.toHaveBeenCalled()
+  })
 })

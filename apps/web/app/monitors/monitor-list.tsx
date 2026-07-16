@@ -27,6 +27,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { cn } from "@/lib/utils"
 import { listMonitors, type MonitorDto, type MonitorListDto } from "@/lib/monitor-api"
 import { monitorDetailsHref, monitorEditHref, monitorListHref } from "@/lib/monitor-navigation"
+import { formatMonitorTimestamp } from "@/lib/monitor-time"
 import { MonitorDeleteButton } from "./monitor-delete-button"
 import { MonitorStateButton, type MonitorMutationAction } from "./monitor-pause-button"
 
@@ -36,20 +37,22 @@ type ListState =
   | { type: "error" }
   | { type: "ready"; data: MonitorListDto }
 
-const dateFormatter = new Intl.DateTimeFormat("en-US", {
-  dateStyle: "medium",
-  timeStyle: "short",
-})
-
-function latestCheck(monitor: MonitorDto): { label: string; time: string } {
+function latestCheck(monitor: MonitorDto): { label: string; emptyTime: string } {
   if (monitor.status === "paused") {
     return {
       label: "Paused",
-      time: monitor.last_checked_at ? dateFormatter.format(new Date(monitor.last_checked_at)) : "No completed check",
+      emptyTime: "No completed check",
     }
   }
-  if (!monitor.last_checked_at) return { label: "Not checked yet", time: "Awaiting first run" }
-  return { label: "Last checked", time: dateFormatter.format(new Date(monitor.last_checked_at)) }
+  if (!monitor.last_checked_at) return { label: "Not checked yet", emptyTime: "Awaiting first run" }
+  return { label: "Last checked", emptyTime: "No completed check" }
+}
+
+function MonitorCheckTime({ value, emptyText }: { value: string | null; emptyText: string }) {
+  const timestamp = formatMonitorTimestamp(value)
+  if (timestamp.kind === "missing") return <>{emptyText}</>
+  if (timestamp.kind === "invalid") return <span title={`Received value: ${timestamp.original}`}>{timestamp.display}</span>
+  return <time dateTime={timestamp.original} title={`UTC: ${timestamp.original}`}>{timestamp.display}</time>
 }
 
 function responseTime(monitor: MonitorDto): string {
@@ -147,6 +150,7 @@ export function MonitorList({
   const [requestVersion, setRequestVersion] = useState(0)
   const [state, setState] = useState<ListState>({ type: "loading" })
   const restoredPositionKey = useRef<string | null>(null)
+  const latestReadRef = useRef(0)
   const { page, pageSize } = pagination
 
   if (pagination.sourcePage !== initialPage || pagination.sourcePageSize !== initialPageSize) {
@@ -160,9 +164,10 @@ export function MonitorList({
   }
 
   useEffect(() => {
-    let cancelled = false
-    void listMonitors(page, pageSize).then((outcome) => {
-      if (cancelled) return
+    const controller = new AbortController()
+    const readId = ++latestReadRef.current
+    void listMonitors(page, pageSize, { signal: controller.signal }).then((outcome) => {
+      if (readId !== latestReadRef.current || outcome.type === "cancelled") return
       if (outcome.type === "success") {
         if (page > outcome.data.pages) {
           setState({ type: "loading" })
@@ -175,7 +180,7 @@ export function MonitorList({
       }
       setState({ type: "error" })
     })
-    return () => { cancelled = true }
+    return () => { controller.abort() }
   }, [page, pageSize, requestVersion, router])
 
   const data = state.type === "ready" ? state.data : null
@@ -293,7 +298,7 @@ export function MonitorList({
                           <div className="mt-1 max-w-sm truncate text-sm text-muted-foreground" title={monitor.url}>{monitor.url}</div>
                         </TableCell>
                         <TableCell className="px-2 py-4"><StatusBadge status={monitor.status} /></TableCell>
-                        <TableCell className="px-2 py-4"><div className="text-sm font-medium text-foreground">{check.label}</div><div className="mt-1 text-sm text-muted-foreground">{check.time}</div></TableCell>
+                        <TableCell className="px-2 py-4"><div className="text-sm font-medium text-foreground">{check.label}</div><div className="mt-1 text-sm text-muted-foreground"><MonitorCheckTime value={monitor.last_checked_at} emptyText={check.emptyTime} /></div></TableCell>
                         <TableCell className="px-2 py-4 text-sm font-medium">{responseTime(monitor)}</TableCell>
                         <TableCell className="px-2 py-4 text-sm font-medium">{statusCode(monitor)}</TableCell>
                         <TableCell className="px-2 py-4 text-right"><MonitorActions monitor={monitor} returnHref={returnHref} onNavigate={rememberListPosition} onMonitorChange={replaceMonitor} onMonitorDelete={removeMonitor} /></TableCell>

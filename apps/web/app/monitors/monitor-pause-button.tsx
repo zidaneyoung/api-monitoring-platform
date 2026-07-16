@@ -1,7 +1,7 @@
 "use client"
 
 import { Loader2Icon, PauseIcon, PlayIcon } from "lucide-react"
-import { useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -48,12 +48,15 @@ export function MonitorStateButton({
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
   const requestPendingRef = useRef(false)
+  const mountedRef = useRef(true)
   const activePendingAction = pendingAction === undefined ? localPendingAction : pendingAction
   const setPendingAction = onPendingActionChange ?? setLocalPendingAction
   const isPaused = monitor.status === "paused"
   const action = isPaused ? "resume" : "pause"
   const isSubmitting = activePendingAction === action
   const hasPendingMutation = activePendingAction !== null
+
+  useEffect(() => () => { mountedRef.current = false }, [])
 
   function handleOpenChange(nextOpen: boolean) {
     if (isSubmitting) return
@@ -73,6 +76,7 @@ export function MonitorStateButton({
     const outcome = action === "resume"
       ? await resumeMonitor(monitor.id)
       : await pauseMonitor(monitor.id)
+    if (!mountedRef.current) return
 
     if (outcome.type === "success") {
       const message = `${monitor.name} ${action === "resume" ? "resumed" : "paused"}.`

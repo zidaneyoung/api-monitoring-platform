@@ -182,6 +182,41 @@ describe("listMonitors", () => {
     }), { status: 200 })))
     await expect(listMonitors(1, 10)).resolves.toEqual({ type: "unexpected_response" })
   })
+
+  it("retries one clearly transient read failure", async () => {
+    const page = { items: [responseMonitor], page: 1, page_size: 10, total: 1, pages: 1 }
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(null, { status: 503 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(page), { status: 200 }))
+    vi.stubGlobal("fetch", fetchMock)
+
+    await expect(listMonitors(1, 10)).resolves.toEqual({ type: "success", data: page })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it.each([401, 403, 404, 409, 422, 429, 500])("does not retry non-transient read status %s", async (status) => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status }))
+    vi.stubGlobal("fetch", fetchMock)
+
+    await listMonitors(1, 10)
+    expect(fetchMock).toHaveBeenCalledOnce()
+  })
+
+  it("cancels an in-flight read without retrying it", async () => {
+    const controller = new AbortController()
+    const fetchMock = vi.fn().mockImplementation((_url: string, options: RequestInit) => (
+      new Promise<Response>((_resolve, reject) => {
+        options.signal?.addEventListener("abort", () => reject(new DOMException("cancelled", "AbortError")))
+      })
+    ))
+    vi.stubGlobal("fetch", fetchMock)
+
+    const outcome = listMonitors(1, 10, { signal: controller.signal })
+    controller.abort()
+
+    await expect(outcome).resolves.toEqual({ type: "cancelled" })
+    expect(fetchMock).toHaveBeenCalledOnce()
+  })
 })
 
 describe("getMonitor", () => {
@@ -277,5 +312,21 @@ describe("deleteMonitor", () => {
   ])("maps delete status %s to a controlled outcome", async (status, expected) => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status })))
     await expect(deleteMonitor("monitor-1")).resolves.toEqual(expected)
+  })
+})
+
+describe("mutation request policy", () => {
+  it.each([
+    ["create", () => createMonitor(payload)],
+    ["edit", () => updateMonitor("monitor-1", payload)],
+    ["pause", () => pauseMonitor("monitor-1")],
+    ["resume", () => resumeMonitor("monitor-1")],
+    ["delete", () => deleteMonitor("monitor-1")],
+  ])("does not automatically retry %s", async (_name, mutate) => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 503 }))
+    vi.stubGlobal("fetch", fetchMock)
+
+    await mutate()
+    expect(fetchMock).toHaveBeenCalledOnce()
   })
 })

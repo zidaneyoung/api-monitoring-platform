@@ -64,7 +64,7 @@ describe("MonitorEdit", () => {
 
   it("renders a controlled load error and retries", async () => {
     fetchMock
-      .mockResolvedValueOnce(new Response(null, { status: 503 }))
+      .mockResolvedValueOnce(new Response(null, { status: 500 }))
       .mockResolvedValueOnce(new Response(JSON.stringify(monitor), { status: 200 }))
     render(<MonitorEdit monitorId={monitor.id} returnHref={returnHref} />)
 

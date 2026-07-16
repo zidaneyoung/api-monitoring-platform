@@ -47,6 +47,7 @@ export function MonitorDeleteButton({
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
   const requestPendingRef = useRef(false)
+  const mountedRef = useRef(true)
   const completionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const activePendingAction = pendingAction === undefined ? localPendingAction : pendingAction
   const setPendingAction = onPendingActionChange ?? setLocalPendingAction
@@ -54,6 +55,7 @@ export function MonitorDeleteButton({
   const hasPendingMutation = activePendingAction !== null
 
   useEffect(() => () => {
+    mountedRef.current = false
     if (completionTimerRef.current) clearTimeout(completionTimerRef.current)
   }, [])
 
@@ -73,6 +75,7 @@ export function MonitorDeleteButton({
     setPendingAction("delete")
 
     const outcome = await deleteMonitor(monitor.id)
+    if (!mountedRef.current) return
     if (outcome.type === "success") {
       setSuccess(`${monitor.name} deleted.`)
       setOpen(false)

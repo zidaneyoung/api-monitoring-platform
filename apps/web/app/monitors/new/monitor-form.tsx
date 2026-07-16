@@ -111,6 +111,9 @@ export function MonitorForm({ monitor, successHref }: { monitor?: MonitorDto; su
   const [isSubmitting, setIsSubmitting] = useState(false)
   const errorSummaryRef = useRef<HTMLDivElement>(null)
   const dirtyRef = useRef(false)
+  const mountedRef = useRef(true)
+  const requestPendingRef = useRef(false)
+  const mutationVersionRef = useRef(0)
   const blockedTriggerRef = useRef<HTMLElement | null>(null)
   const [pendingHref, setPendingHref] = useState<string | null>(null)
   const isEditing = monitor !== undefined
@@ -119,6 +122,11 @@ export function MonitorForm({ monitor, successHref }: { monitor?: MonitorDto; su
   useEffect(() => {
     if (errorVersion > 0) errorSummaryRef.current?.focus()
   }, [errorVersion])
+
+  useEffect(() => () => {
+    mountedRef.current = false
+    mutationVersionRef.current += 1
+  }, [])
 
   useEffect(() => {
     dirtyRef.current = false
@@ -172,21 +180,27 @@ export function MonitorForm({ monitor, successHref }: { monitor?: MonitorDto; su
 
   async function submitMonitor(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (isSubmitting) return
+    if (requestPendingRef.current) return
+    requestPendingRef.current = true
 
     const payload = payloadFromFormData(new FormData(event.currentTarget))
 
     const clientErrors = validateMonitorPayload(payload)
     if (clientErrors) {
+      requestPendingRef.current = false
       showErrors(clientErrors)
       return
     }
 
     setErrors(emptyMonitorFormErrors())
     setIsSubmitting(true)
+    const mutationVersion = ++mutationVersionRef.current
     const outcome = monitor
       ? await updateMonitor(monitor.id, payload)
       : await createMonitor(payload)
+    if (!mountedRef.current || mutationVersion !== mutationVersionRef.current) return
+
+    requestPendingRef.current = false
     setIsSubmitting(false)
 
     if (outcome.type === "success") {

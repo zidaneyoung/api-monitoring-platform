@@ -98,13 +98,30 @@ describe("MonitorDetails", () => {
 
   it("renders a controlled error and retries", async () => {
     fetchMock
-      .mockResolvedValueOnce(new Response(null, { status: 503 }))
+      .mockResolvedValueOnce(new Response(null, { status: 500 }))
       .mockResolvedValueOnce(new Response(JSON.stringify(monitor), { status: 200 }))
     render(<MonitorDetails monitorId={monitor.id} returnHref={returnHref} />)
 
     fireEvent.click(await screen.findByRole("button", { name: "Try again" }))
     expect(await screen.findByText("Owned details API")).toBeTruthy()
     expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it("ignores a superseded detail response that finishes last", async () => {
+    let finishFirst: (response: Response) => void = () => undefined
+    let finishSecond: (response: Response) => void = () => undefined
+    fetchMock
+      .mockReturnValueOnce(new Promise<Response>((resolve) => { finishFirst = resolve }))
+      .mockReturnValueOnce(new Promise<Response>((resolve) => { finishSecond = resolve }))
+    const { rerender } = render(<MonitorDetails monitorId="monitor-old" returnHref={returnHref} />)
+
+    rerender(<MonitorDetails monitorId="monitor-new" returnHref={returnHref} />)
+    await act(async () => finishSecond(new Response(JSON.stringify({ ...monitor, id: "monitor-new", name: "New monitor" }), { status: 200 })))
+    expect(await screen.findByText("New monitor")).toBeTruthy()
+
+    await act(async () => finishFirst(new Response(JSON.stringify({ ...monitor, id: "monitor-old", name: "Old monitor" }), { status: 200 })))
+    expect(screen.queryByText("Old monitor")).toBeNull()
+    expect(screen.getByText("New monitor")).toBeTruthy()
   })
 
   it("confirms pause and immediately renders the persisted paused state", async () => {
