@@ -895,3 +895,65 @@ def test_monitor_resume_requires_authentication() -> None:
 
     assert response.status_code == 401
     assert asyncio.run(stored_monitor(monitor_id)).status == "paused"
+
+
+def test_owner_delete_removes_monitor_and_all_cascaded_history() -> None:
+    owner, _ = asyncio.run(reset_users_and_create_two())
+    monitor_id = asyncio.run(add_monitors(owner.id, ["Delete me"], statuses=["up"]))[0]
+    asyncio.run(add_monitor_history(monitor_id, owner.id))
+    asyncio.run(add_monitor_run(monitor_id))
+    app.dependency_overrides[get_database_session] = override_database_session
+    app.dependency_overrides[require_authenticated_session] = authenticated_as(owner)
+    try:
+        with TestClient(app) as client:
+            deleted = client.delete(f"/monitors/{monitor_id}")
+            listed = client.get("/monitors")
+            repeated = client.delete(f"/monitors/{monitor_id}")
+    finally:
+        app.dependency_overrides.pop(get_database_session, None)
+        app.dependency_overrides.pop(require_authenticated_session, None)
+
+    assert deleted.status_code == 204
+    assert deleted.content == b""
+    assert listed.status_code == 200
+    assert listed.json()["items"] == []
+    assert listed.json()["total"] == 0
+    assert repeated.status_code == 404
+    assert repeated.json() == {
+        "detail": {"code": "monitor_not_found", "message": "Monitor not found."}
+    }
+    assert asyncio.run(stored_monitor_ids_for_user(owner.id)) == []
+    assert asyncio.run(monitor_run_ids(monitor_id)) == []
+    assert asyncio.run(monitor_history_ids(monitor_id)) == ([], [])
+
+
+def test_foreign_and_missing_delete_share_controlled_response() -> None:
+    owner, other = asyncio.run(reset_users_and_create_two())
+    foreign_id = asyncio.run(add_monitors(other.id, ["Foreign delete"], statuses=["up"]))[0]
+    app.dependency_overrides[get_database_session] = override_database_session
+    app.dependency_overrides[require_authenticated_session] = authenticated_as(owner)
+    try:
+        with TestClient(app) as client:
+            foreign_response = client.delete(f"/monitors/{foreign_id}")
+            missing_response = client.delete(f"/monitors/{uuid4()}")
+    finally:
+        app.dependency_overrides.pop(get_database_session, None)
+        app.dependency_overrides.pop(require_authenticated_session, None)
+
+    assert foreign_response.status_code == missing_response.status_code == 404
+    assert foreign_response.json() == missing_response.json()
+    assert asyncio.run(stored_monitor(foreign_id)).name == "Foreign delete"
+
+
+def test_monitor_delete_requires_authentication() -> None:
+    owner, _ = asyncio.run(reset_users_and_create_two())
+    monitor_id = asyncio.run(add_monitors(owner.id, ["Protected delete"], statuses=["up"]))[0]
+    app.dependency_overrides[get_database_session] = override_database_session
+    try:
+        with TestClient(app) as client:
+            response = client.delete(f"/monitors/{monitor_id}")
+    finally:
+        app.dependency_overrides.pop(get_database_session, None)
+
+    assert response.status_code == 401
+    assert asyncio.run(stored_monitor(monitor_id)).name == "Protected delete"

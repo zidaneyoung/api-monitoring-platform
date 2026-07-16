@@ -1,13 +1,15 @@
 "use client"
 
 import Link from "next/link"
-import { ArrowLeftIcon, PencilIcon, Trash2Icon } from "lucide-react"
+import { useRouter } from "next/navigation"
+import { ArrowLeftIcon, PencilIcon } from "lucide-react"
 import { useEffect, useState } from "react"
 
 import { StatusBadge } from "@/components/status-badge"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { getMonitor, type MonitorDto } from "@/lib/monitor-api"
+import { MonitorDeleteButton } from "../monitor-delete-button"
 import { MonitorStateButton } from "../monitor-pause-button"
 
 
@@ -79,9 +81,11 @@ function MessageDetails({
 function DetailsContent({
   monitor,
   onMonitorChange,
+  onDeleted,
 }: {
   monitor: MonitorDto
   onMonitorChange: (monitor: MonitorDto) => void
+  onDeleted: (monitorId: string) => void
 }) {
   const configuration = [
     ["HTTP method", monitor.http_method],
@@ -99,7 +103,7 @@ function DetailsContent({
         <div className="flex flex-wrap items-center gap-3">
           <Link className={buttonVariants({ variant: "outline", size: "lg", className: "h-10 px-4" })} href={`/monitors/${monitor.id}/edit`}><PencilIcon data-icon="inline-start" />Edit</Link>
           <MonitorStateButton className="h-10 px-4" monitor={monitor} onChanged={onMonitorChange} />
-          <Button className="h-10 px-4" variant="destructive" size="lg" type="button" disabled><Trash2Icon data-icon="inline-start" />Delete</Button>
+          <MonitorDeleteButton className="h-10 px-4" monitor={monitor} onDeleted={onDeleted} />
         </div>
       </header>
 
@@ -122,6 +126,7 @@ function DetailsContent({
 }
 
 export function MonitorDetails({ monitorId }: { monitorId: string }) {
+  const router = useRouter()
   const [requestVersion, setRequestVersion] = useState(0)
   const [state, setState] = useState<DetailsState>({ type: "loading", monitorId })
 
@@ -139,5 +144,5 @@ export function MonitorDetails({ monitorId }: { monitorId: string }) {
   if (state.type === "loading" || state.monitorId !== monitorId) return <LoadingDetails />
   if (state.type === "not_found") return <MessageDetails title="Monitor not found" description="This monitor does not exist or is not available to your account." />
   if (state.type === "error") return <MessageDetails title="Unable to display monitor" description="Monitor details could not be loaded. Try again." retry={() => { setState({ type: "loading", monitorId }); setRequestVersion((value) => value + 1) }} />
-  return <DetailsContent monitor={state.monitor} onMonitorChange={(monitor) => setState({ type: "ready", monitorId, monitor })} />
+  return <DetailsContent monitor={state.monitor} onMonitorChange={(monitor) => setState({ type: "ready", monitorId, monitor })} onDeleted={() => { router.push("/monitors"); router.refresh() }} />
 }

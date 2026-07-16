@@ -102,4 +102,19 @@ describe("MonitorList", () => {
     expect((await screen.findAllByText("Owner paused API")).length).toBeGreaterThan(0)
     expect(fetchMock.mock.calls[1]?.[0]).toBe("http://localhost:8000/monitors?page=2&page_size=10")
   })
+
+  it("confirms deletion and removes the monitor from the active list", async () => {
+    vi.stubGlobal("confirm", vi.fn(() => true))
+    fetchMock
+      .mockResolvedValueOnce(responsePage({ items: [unknownMonitor], total: 1 }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+    render(<MonitorList />)
+
+    expect((await screen.findAllByText("Owner unknown API")).length).toBeGreaterThan(0)
+    fireEvent.click(screen.getAllByRole("button", { name: "Actions for Owner unknown API" })[0])
+    fireEvent.click(await screen.findByRole("button", { name: "Delete monitor" }))
+    expect(await screen.findByText("No monitors yet")).toBeTruthy()
+    expect(screen.queryByText("Owner unknown API")).toBeNull()
+    expect(fetchMock.mock.calls[1]?.[0]).toBe("http://localhost:8000/monitors/monitor-unknown")
+  })
 })

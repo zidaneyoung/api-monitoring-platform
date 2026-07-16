@@ -303,3 +303,23 @@ export async function resumeMonitor(
     return requestFailure(error)
   }
 }
+
+export async function deleteMonitor(
+  monitorId: string,
+): Promise<MonitorOutcome<null>> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/monitors/${encodeURIComponent(monitorId)}`, {
+      method: "DELETE",
+      credentials: "include",
+      signal: AbortSignal.timeout(MONITOR_REQUEST_TIMEOUT_MS),
+    })
+
+    if (response.status === 204) return { type: "success", data: null }
+    if (response.status === 404) return { type: "not_found" }
+    if (response.status === 401) return { type: "unauthenticated" }
+    if (response.status === 503) return { type: "unavailable" }
+    return { type: "unexpected_response" }
+  } catch (error) {
+    return requestFailure(error)
+  }
+}

@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -211,6 +211,34 @@ async def resume_monitor(
             "Unable to resume the monitor. Try again later."
         ) from None
     return monitor
+
+
+@router.delete(
+    "/{monitor_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    responses={
+        status.HTTP_401_UNAUTHORIZED: {"description": "Authentication required."},
+        status.HTTP_404_NOT_FOUND: {"description": "Monitor not found."},
+        status.HTTP_503_SERVICE_UNAVAILABLE: {
+            "description": "Monitor storage unavailable."
+        },
+    },
+)
+async def delete_monitor(
+    monitor_id: UUID,
+    authenticated: AuthenticatedSession = Depends(require_authenticated_session),
+    session: AsyncSession = Depends(get_database_session),
+) -> Response:
+    monitor = await _owned_monitor(session, monitor_id, authenticated.user.id)
+    await session.delete(monitor)
+    try:
+        await session.commit()
+    except SQLAlchemyError:
+        await session.rollback()
+        raise _database_unavailable_error(
+            "Unable to delete the monitor. Try again later."
+        ) from None
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.put(
