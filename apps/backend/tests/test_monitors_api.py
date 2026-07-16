@@ -85,6 +85,49 @@ async def stored_monitor_ids_for_user(user_id: UUID) -> list[UUID]:
         await engine.dispose()
 
 
+async def add_monitors(
+    user_id: UUID,
+    names: list[str],
+    *,
+    statuses: list[str] | None = None,
+) -> list[UUID]:
+    engine = create_database_engine(database_url())
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        async with sessions() as session:
+            monitors = [
+                Monitor(
+                    id=uuid4(),
+                    user_id=user_id,
+                    name=name,
+                    url=f"https://example.com/{index}",
+                    http_method="HEAD" if index % 2 else "GET",
+                    interval_seconds=60 + index,
+                    timeout_seconds=10,
+                    expected_status_min=200,
+                    expected_status_max=399,
+                    failure_threshold=3,
+                    recovery_threshold=2,
+                    status=statuses[index] if statuses else "unknown",
+                    is_enabled=statuses is None or statuses[index] != "paused",
+                    consecutive_failures=0,
+                    consecutive_successes=0,
+                    next_check_at=datetime.now(timezone.utc),
+                    last_checked_at=(
+                        datetime.now(timezone.utc) if index % 2 else None
+                    ),
+                    latest_response_time_ms=125 if index % 2 else None,
+                    latest_status_code=204 if index % 2 else None,
+                )
+                for index, name in enumerate(names)
+            ]
+            session.add_all(monitors)
+            await session.commit()
+            return [monitor.id for monitor in monitors]
+    finally:
+        await engine.dispose()
+
+
 def authenticated_as(user: User):
     async def override() -> AuthenticatedSession:
         return AuthenticatedSession(user=user, token="test-session", cookie_max_age=60)
@@ -251,3 +294,96 @@ def test_monitor_creation_returns_safe_database_failure() -> None:
     }
     assert failing_session.rolled_back is True
     assert "sensitive" not in response.text
+
+
+def test_monitor_list_requires_authentication() -> None:
+    asyncio.run(reset_users_and_create_two())
+    app.dependency_overrides[get_database_session] = override_database_session
+    try:
+        with TestClient(app) as client:
+            response = client.get("/monitors")
+    finally:
+        app.dependency_overrides.pop(get_database_session, None)
+
+    assert response.status_code == 401
+
+
+def test_monitor_list_returns_only_owner_configuration_and_latest_fields() -> None:
+    owner, other = asyncio.run(reset_users_and_create_two())
+    asyncio.run(
+        add_monitors(
+            owner.id,
+            ["Unknown API", "Paused API"],
+            statuses=["unknown", "paused"],
+        )
+    )
+    asyncio.run(add_monitors(other.id, ["Foreign API"], statuses=["down"]))
+    app.dependency_overrides[get_database_session] = override_database_session
+    app.dependency_overrides[require_authenticated_session] = authenticated_as(owner)
+    try:
+        with TestClient(app) as client:
+            response = client.get("/monitors?page=1&page_size=10")
+    finally:
+        app.dependency_overrides.pop(get_database_session, None)
+        app.dependency_overrides.pop(require_authenticated_session, None)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["page"] == 1
+    assert body["page_size"] == 10
+    assert body["total"] == 2
+    assert body["pages"] == 1
+    assert {item["name"] for item in body["items"]} == {
+        "Unknown API",
+        "Paused API",
+    }
+    assert {item["status"] for item in body["items"]} == {"unknown", "paused"}
+    paused = next(item for item in body["items"] if item["status"] == "paused")
+    assert paused["http_method"] == "HEAD"
+    assert paused["latest_response_time_ms"] == 125
+    assert paused["latest_status_code"] == 204
+    assert paused["last_checked_at"] is not None
+    assert all("user_id" not in item for item in body["items"])
+    assert all("consecutive_failures" not in item for item in body["items"])
+
+
+def test_monitor_list_pagination_is_stable_and_excludes_foreign_rows() -> None:
+    owner, other = asyncio.run(reset_users_and_create_two())
+    owner_ids = set(
+        asyncio.run(add_monitors(owner.id, [f"Owner {index}" for index in range(12)]))
+    )
+    asyncio.run(add_monitors(other.id, [f"Foreign {index}" for index in range(3)]))
+    app.dependency_overrides[get_database_session] = override_database_session
+    app.dependency_overrides[require_authenticated_session] = authenticated_as(owner)
+    try:
+        with TestClient(app) as client:
+            responses = [
+                client.get(f"/monitors?page={page}&page_size=5") for page in range(1, 4)
+            ]
+    finally:
+        app.dependency_overrides.pop(get_database_session, None)
+        app.dependency_overrides.pop(require_authenticated_session, None)
+
+    assert [response.status_code for response in responses] == [200, 200, 200]
+    bodies = [response.json() for response in responses]
+    assert [len(body["items"]) for body in bodies] == [5, 5, 2]
+    assert all(body["total"] == 12 and body["pages"] == 3 for body in bodies)
+    returned_ids = {
+        UUID(item["id"]) for body in bodies for item in body["items"]
+    }
+    assert returned_ids == owner_ids
+
+
+@pytest.mark.parametrize("query", ["page=0", "page_size=0", "page_size=101"])
+def test_monitor_list_rejects_invalid_pagination(query: str) -> None:
+    owner, _ = asyncio.run(reset_users_and_create_two())
+    app.dependency_overrides[get_database_session] = override_database_session
+    app.dependency_overrides[require_authenticated_session] = authenticated_as(owner)
+    try:
+        with TestClient(app) as client:
+            response = client.get(f"/monitors?{query}")
+    finally:
+        app.dependency_overrides.pop(get_database_session, None)
+        app.dependency_overrides.pop(require_authenticated_session, None)
+
+    assert response.status_code == 422

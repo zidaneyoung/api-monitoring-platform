@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 
-import { createMonitor, type MonitorCreatePayload } from "@/lib/monitor-api"
+import { createMonitor, listMonitors, type MonitorCreatePayload } from "@/lib/monitor-api"
 
 
 const payload: MonitorCreatePayload = {
@@ -82,5 +82,35 @@ describe("createMonitor", () => {
   ])("maps request failure to a controlled outcome", async (failure, expected) => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(failure))
     await expect(createMonitor(payload)).resolves.toEqual(expected)
+  })
+})
+
+describe("listMonitors", () => {
+  it("returns authenticated paginated monitor data", async () => {
+    const page = { items: [responseMonitor], page: 2, page_size: 5, total: 6, pages: 2 }
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(page), { status: 200 }))
+    vi.stubGlobal("fetch", fetchMock)
+
+    await expect(listMonitors(2, 5)).resolves.toEqual({ type: "success", data: page })
+    const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe("http://localhost:8000/monitors?page=2&page_size=5")
+    expect(options.credentials).toBe("include")
+    expect(options.cache).toBe("no-store")
+  })
+
+  it.each([
+    [401, { type: "unauthenticated" }],
+    [503, { type: "unavailable" }],
+    [500, { type: "unexpected_response" }],
+  ])("maps list status %s to a controlled outcome", async (status, expected) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status })))
+    await expect(listMonitors(1, 10)).resolves.toEqual(expected)
+  })
+
+  it("rejects malformed list responses", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      items: [{ id: "monitor-1" }], page: 1, page_size: 10, total: 1, pages: 1,
+    }), { status: 200 })))
+    await expect(listMonitors(1, 10)).resolves.toEqual({ type: "unexpected_response" })
   })
 })

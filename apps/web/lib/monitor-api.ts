@@ -29,6 +29,14 @@ export type MonitorCreatePayload = Omit<
   | "latest_status_code"
 >
 
+export type MonitorListDto = {
+  items: MonitorDto[]
+  page: number
+  page_size: number
+  total: number
+  pages: number
+}
+
 export type MonitorField = keyof MonitorCreatePayload | "form"
 
 export type MonitorError = {
@@ -98,6 +106,26 @@ async function readMonitor(response: Response): Promise<MonitorDto | null> {
   }
 }
 
+async function readMonitorList(response: Response): Promise<MonitorListDto | null> {
+  try {
+    const value = await response.json() as Partial<MonitorListDto>
+    return Array.isArray(value.items)
+      && value.items.every((item) => (
+        typeof item?.id === "string"
+        && typeof item.name === "string"
+        && typeof item.url === "string"
+      ))
+      && typeof value.page === "number"
+      && typeof value.page_size === "number"
+      && typeof value.total === "number"
+      && typeof value.pages === "number"
+      ? value as MonitorListDto
+      : null
+  } catch {
+    return null
+  }
+}
+
 function requestFailure(error: unknown): MonitorOutcome<never> {
   if (
     error instanceof DOMException
@@ -128,6 +156,36 @@ export async function createMonitor(
     }
     if (response.status === 422) {
       return { type: "validation", errors: await readValidationErrors(response) }
+    }
+    if (response.status === 401) return { type: "unauthenticated" }
+    if (response.status === 503) return { type: "unavailable" }
+    return { type: "unexpected_response" }
+  } catch (error) {
+    return requestFailure(error)
+  }
+}
+
+export async function listMonitors(
+  page: number,
+  pageSize: number,
+): Promise<MonitorOutcome<MonitorListDto>> {
+  const query = new URLSearchParams({
+    page: String(page),
+    page_size: String(pageSize),
+  })
+  try {
+    const response = await fetch(`${API_BASE_URL}/monitors?${query}`, {
+      method: "GET",
+      credentials: "include",
+      cache: "no-store",
+      signal: AbortSignal.timeout(MONITOR_REQUEST_TIMEOUT_MS),
+    })
+
+    if (response.ok) {
+      const monitors = await readMonitorList(response)
+      return monitors
+        ? { type: "success", data: monitors }
+        : { type: "unexpected_response" }
     }
     if (response.status === 401) return { type: "unauthenticated" }
     if (response.status === 503) return { type: "unavailable" }

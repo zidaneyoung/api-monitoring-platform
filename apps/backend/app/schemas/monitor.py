@@ -1,4 +1,5 @@
 from datetime import datetime
+from math import ceil
 from typing import Literal
 from uuid import UUID
 
@@ -55,3 +56,28 @@ class MonitorResponse(BaseModel):
     last_checked_at: datetime | None
     latest_response_time_ms: int | None
     latest_status_code: int | None
+
+
+class MonitorListResponse(BaseModel):
+    items: list[MonitorResponse]
+    page: int
+    page_size: int
+    total: int
+    pages: int
+
+    @classmethod
+    def from_items(
+        cls,
+        *,
+        items: list[object],
+        page: int,
+        page_size: int,
+        total: int,
+    ) -> "MonitorListResponse":
+        return cls(
+            items=[MonitorResponse.model_validate(item) for item in items],
+            page=page,
+            page_size=page_size,
+            total=total,
+            pages=max(1, ceil(total / page_size)),
+        )
