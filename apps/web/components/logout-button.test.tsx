@@ -34,6 +34,7 @@ describe("LogoutButton", () => {
         method: "POST",
         credentials: "include",
         cache: "no-store",
+        signal: expect.any(AbortSignal),
       },
     )
   })

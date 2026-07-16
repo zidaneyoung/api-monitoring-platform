@@ -42,6 +42,14 @@ app.include_router(health_router)
 app.include_router(auth_router)
 
 
+@app.middleware("http")
+async def prevent_auth_response_caching(request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith("/auth/"):
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 @app.get("/")
 def read_root() -> dict[str, object]:
     return {

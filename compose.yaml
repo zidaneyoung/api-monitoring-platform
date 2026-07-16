@@ -75,6 +75,8 @@ services:
         condition: service_healthy
     env_file:
       - ./apps/web/.env.local
+    environment:
+      INTERNAL_API_BASE_URL: http://backend:8000
     ports:
       - ${FRONTEND_PORT:-3000}:3000
     volumes:

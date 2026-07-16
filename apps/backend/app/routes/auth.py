@@ -3,7 +3,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
@@ -193,7 +193,9 @@ async def require_authenticated_session(
 )
 async def register_user(
     payload: RegistrationRequest,
+    response: Response,
     session: AsyncSession = Depends(get_database_session),
+    session_store: SessionStore = Depends(get_session_store),
 ) -> User:
     email = str(payload.email)
     if await find_user_by_email(session, email) is not None:
@@ -208,8 +210,42 @@ async def register_user(
         await session.rollback()
         raise _duplicate_email_error() from None
 
-    await session.commit()
-    await session.refresh(user)
+    try:
+        session_token = await session_store.create_session(user.id)
+    except SessionStoreUnavailableError:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "session_unavailable",
+                "message": "Unable to create the account. Try again later.",
+            },
+        ) from None
+
+    try:
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        try:
+            await session_store.delete_session(session_token)
+        except SessionStoreUnavailableError:
+            pass
+        raise _duplicate_email_error() from None
+    except SQLAlchemyError:
+        await session.rollback()
+        try:
+            await session_store.delete_session(session_token)
+        except SessionStoreUnavailableError:
+            pass
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "database_unavailable",
+                "message": "Unable to create the account. Try again later.",
+            },
+        ) from None
+
+    set_session_cookie(response, session_token, settings)
     return user
 
 

@@ -90,6 +90,7 @@ def test_valid_login_normalizes_email_creates_session_and_returns_safe_user(
     assert submitted_emails == ["user@example.com"]
     assert store.created_for == [user.id]
     assert response.json() == {"id": str(user.id), "email": user.email}
+    assert response.headers["cache-control"] == "no-store"
     assert store.token not in response.text
     set_cookie = response.headers["set-cookie"]
     assert "amp_session=test-session-token" in set_cookie
@@ -123,6 +124,7 @@ def test_invalid_credentials_use_same_generic_response(
             "message": "Invalid email or password.",
         }
     }
+    assert response.headers["cache-control"] == "no-store"
     assert store.created_for == []
 
 

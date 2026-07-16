@@ -6,7 +6,6 @@ import {
   EyeOff,
   LockKeyhole,
   Mail,
-  UserRound,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -32,21 +31,15 @@ const COPY = {
   },
   register: {
     title: "Create your account",
-    description: "Start monitoring in minutes.",
+    description: "Create your account and enter your monitoring console.",
     submit: "Create account",
-    success: "Account created. You can now log in.",
+    success: "Account created. Redirecting…",
     statusIntro: "Ready to register",
     alternateLabel: "Already have an account?",
     alternateHref: "/login",
     alternateText: "Log in",
   },
 } satisfies Record<Mode, Record<string, string>>;
-
-function validateName(value: string) {
-  if (!value.trim()) return "Full name is required.";
-  if (value.trim().length < 2) return "Enter your full name.";
-  return "";
-}
 
 function validateEmail(value: string) {
   if (!value.trim()) return "Email is required.";
@@ -96,13 +89,12 @@ export function AuthForm({
   const formId = useId();
   const isRegister = mode === "register";
 
-  const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-  const [touched, setTouched] = useState({ name: false, email: false, password: false, confirm: false });
+  const [touched, setTouched] = useState({ email: false, password: false, confirm: false });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [status, setStatus] = useState(copy.statusIntro);
   const [tone, setTone] = useState<Tone>("idle");
@@ -110,7 +102,6 @@ export function AuthForm({
   const [serverErrors, setServerErrors] = useState({ email: "", password: "" });
 
   const shouldValidate = (field: keyof typeof touched) => touched[field] || submitAttempted;
-  const nameError = isRegister && shouldValidate("name") ? validateName(name) : "";
   const emailError = serverErrors.email || (shouldValidate("email") ? validateEmail(email) : "");
   const passwordError = serverErrors.password || (shouldValidate("password") ? validatePassword(password) : "");
   const confirmError =
@@ -122,7 +113,7 @@ export function AuthForm({
           : ""
       : "";
   const readyToSubmit = Boolean(
-    email.trim() && password && (!isRegister || (name.trim() && confirmPassword)),
+    email.trim() && password && (!isRegister || confirmPassword),
   );
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -133,11 +124,11 @@ export function AuthForm({
     const hasError = Boolean(
       validateEmail(email) ||
         validatePassword(password) ||
-        (isRegister && (validateName(name) || !confirmPassword || confirmPassword !== password)),
+        (isRegister && (!confirmPassword || confirmPassword !== password)),
     );
 
     if (hasError) {
-      setTouched({ name: true, email: true, password: true, confirm: true });
+      setTouched({ email: true, password: true, confirm: true });
       setTone("error");
       setStatus("Fix the highlighted fields and try again.");
       return;
@@ -149,9 +140,9 @@ export function AuthForm({
 
     if (isRegister) {
       const errors = await registerUser(email, password);
-      setIsSubmitting(false);
 
       if (errors.length > 0) {
+        setIsSubmitting(false);
         setServerErrors({
           email: errors.find((error) => error.field === "email")?.message ?? "",
           password: errors.find((error) => error.field === "password")?.message ?? "",
@@ -161,12 +152,11 @@ export function AuthForm({
         return;
       }
 
+      setIsSubmitting(false);
       setTone("success");
       setStatus(copy.success);
-      setPassword("");
-      setConfirmPassword("");
-      setSubmitAttempted(false);
-      setTouched({ name: false, email: false, password: false, confirm: false });
+      router.replace(redirectTo);
+      router.refresh();
       return;
     }
 
@@ -186,6 +176,7 @@ export function AuthForm({
     setTone("success");
     setStatus(copy.success);
     router.replace(redirectTo);
+    router.refresh();
   }
 
   return (
@@ -207,28 +198,6 @@ export function AuthForm({
         </p>
 
         <form className="auth-form" onSubmit={handleSubmit} noValidate aria-busy={isSubmitting}>
-          {isRegister ? (
-            <div className="auth-field" data-invalid={Boolean(nameError)}>
-              <label htmlFor={`${formId}-name`}>Full name</label>
-              <div className="input-shell">
-                <UserRound aria-hidden="true" />
-                <input
-                  id={`${formId}-name`}
-                  type="text"
-                  autoComplete="name"
-                  placeholder="John Doe"
-                  value={name}
-                  onChange={(event) => setName(event.target.value)}
-                  onBlur={() => setTouched((current) => ({ ...current, name: true }))}
-                  disabled={isSubmitting}
-                  aria-invalid={Boolean(nameError)}
-                  aria-describedby={nameError ? `${formId}-name-error` : undefined}
-                />
-              </div>
-              {nameError ? <p id={`${formId}-name-error`} role="alert">{nameError}</p> : null}
-            </div>
-          ) : null}
-
           <div className="auth-field" data-invalid={Boolean(emailError)}>
             <label htmlFor={`${formId}-email`}>Email address</label>
             <div className="input-shell">
