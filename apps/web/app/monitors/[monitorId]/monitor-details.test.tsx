@@ -7,6 +7,7 @@ import type { MonitorDto } from "@/lib/monitor-api"
 
 const fetchMock = vi.fn()
 const navigationMock = vi.hoisted(() => ({ push: vi.fn(), refresh: vi.fn() }))
+const returnHref = "/monitors?page=3&page_size=25"
 
 vi.mock("next/navigation", () => ({
   useRouter: () => navigationMock,
@@ -45,7 +46,7 @@ afterEach(() => {
 describe("MonitorDetails", () => {
   it("renders backend-authoritative configuration and latest state", async () => {
     fetchMock.mockResolvedValue(new Response(JSON.stringify(monitor), { status: 200 }))
-    render(<MonitorDetails monitorId={monitor.id} />)
+    render(<MonitorDetails monitorId={monitor.id} returnHref={returnHref} />)
 
     expect(screen.getByText("Loading monitor details")).toBeTruthy()
     expect(await screen.findByText("Owned details API")).toBeTruthy()
@@ -53,16 +54,43 @@ describe("MonitorDetails", () => {
     expect(screen.getByText("HEAD")).toBeTruthy()
     expect(screen.getByText("5 minutes")).toBeTruthy()
     expect(screen.getByText("200–399")).toBeTruthy()
-    expect(screen.getByText("125 ms")).toBeTruthy()
-    expect(screen.getByText("204")).toBeTruthy()
-    expect(screen.getByText("No check history loaded.")).toBeTruthy()
-    expect(screen.getByRole("link", { name: "Edit" }).getAttribute("href")).toBe("/monitors/monitor-owned/edit")
+    expect(screen.getByText("Current state")).toBeTruthy()
+    expect(screen.getByText("Endpoint configuration")).toBeTruthy()
+    expect(screen.getByText("Schedule configuration")).toBeTruthy()
+    expect(screen.getByText("Success criteria")).toBeTruthy()
+    expect(screen.getByText("Available actions")).toBeTruthy()
+    expect(screen.queryByText("125 ms")).toBeNull()
+    expect(screen.queryByText("No check history loaded.")).toBeNull()
+    expect(screen.getByRole("link", { name: "Edit monitor" }).getAttribute("href")).toBe("/monitors/monitor-owned/edit?return_to=%2Fmonitors%3Fpage%3D3%26page_size%3D25")
+    expect(screen.getByRole("link", { name: "Back to monitors" }).getAttribute("href")).toBe(returnHref)
+    expect(screen.getByRole("link", { name: "Open endpoint" }).getAttribute("target")).toBe("_blank")
+    expect(screen.getByRole("link", { name: "Open endpoint" }).getAttribute("rel")).toBe("noopener noreferrer")
     expect(screen.queryByText(/mock/i)).toBeNull()
+  })
+
+  it("shows visible endpoint copy success", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    vi.stubGlobal("navigator", { clipboard: { writeText } })
+    fetchMock.mockResolvedValue(new Response(JSON.stringify(monitor), { status: 200 }))
+    render(<MonitorDetails monitorId={monitor.id} returnHref={returnHref} />)
+
+    fireEvent.click(await screen.findByRole("button", { name: "Copy endpoint" }))
+    expect((await screen.findByRole("status")).textContent).toBe("Endpoint URL copied.")
+    expect(writeText).toHaveBeenCalledWith(monitor.url)
+  })
+
+  it("shows a visible endpoint copy failure", async () => {
+    vi.stubGlobal("navigator", { clipboard: { writeText: vi.fn().mockRejectedValue(new Error("denied")) } })
+    fetchMock.mockResolvedValue(new Response(JSON.stringify(monitor), { status: 200 }))
+    render(<MonitorDetails monitorId={monitor.id} returnHref={returnHref} />)
+
+    fireEvent.click(await screen.findByRole("button", { name: "Copy endpoint" }))
+    expect((await screen.findByRole("alert")).textContent).toContain("could not be copied")
   })
 
   it("renders the ownership-safe missing state", async () => {
     fetchMock.mockResolvedValue(new Response(null, { status: 404 }))
-    render(<MonitorDetails monitorId="missing-monitor" />)
+    render(<MonitorDetails monitorId="missing-monitor" returnHref={returnHref} />)
 
     expect(await screen.findByText("Monitor not found")).toBeTruthy()
     expect(screen.getByText("This monitor does not exist or is not available to your account.")).toBeTruthy()
@@ -72,7 +100,7 @@ describe("MonitorDetails", () => {
     fetchMock
       .mockResolvedValueOnce(new Response(null, { status: 503 }))
       .mockResolvedValueOnce(new Response(JSON.stringify(monitor), { status: 200 }))
-    render(<MonitorDetails monitorId={monitor.id} />)
+    render(<MonitorDetails monitorId={monitor.id} returnHref={returnHref} />)
 
     fireEvent.click(await screen.findByRole("button", { name: "Try again" }))
     expect(await screen.findByText("Owned details API")).toBeTruthy()
@@ -87,7 +115,7 @@ describe("MonitorDetails", () => {
         status: "paused",
         next_check_at: null,
       }), { status: 200 }))
-    render(<MonitorDetails monitorId={monitor.id} />)
+    render(<MonitorDetails monitorId={monitor.id} returnHref={returnHref} />)
 
     fireEvent.click(await screen.findByRole("button", { name: "Pause monitor" }))
     fireEvent.click(within(screen.getByRole("dialog", { name: "Pause Owned details API?" })).getByRole("button", { name: "Pause monitor" }))
@@ -106,7 +134,7 @@ describe("MonitorDetails", () => {
     fetchMock
       .mockResolvedValueOnce(new Response(JSON.stringify(paused), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify(resumed), { status: 200 }))
-    render(<MonitorDetails monitorId={monitor.id} />)
+    render(<MonitorDetails monitorId={monitor.id} returnHref={returnHref} />)
 
     fireEvent.click(await screen.findByRole("button", { name: "Resume monitor" }))
     fireEvent.click(within(screen.getByRole("dialog", { name: "Resume Owned details API?" })).getByRole("button", { name: "Resume monitor" }))
@@ -119,11 +147,11 @@ describe("MonitorDetails", () => {
     fetchMock
       .mockResolvedValueOnce(new Response(JSON.stringify(monitor), { status: 200 }))
       .mockResolvedValueOnce(new Response(null, { status: 204 }))
-    render(<MonitorDetails monitorId={monitor.id} />)
+    render(<MonitorDetails monitorId={monitor.id} returnHref={returnHref} />)
 
     fireEvent.click(await screen.findByRole("button", { name: "Delete monitor" }))
     fireEvent.click(within(screen.getByRole("dialog", { name: "Permanently delete Owned details API?" })).getByRole("button", { name: "Delete permanently" }))
-    await waitFor(() => expect(navigationMock.push).toHaveBeenCalledWith("/monitors"))
+    await waitFor(() => expect(navigationMock.push).toHaveBeenCalledWith(returnHref))
     expect(navigationMock.refresh).toHaveBeenCalledOnce()
     expect(fetchMock.mock.calls[1]?.[0]).toBe("http://localhost:8000/monitors/monitor-owned")
   })
@@ -133,7 +161,7 @@ describe("MonitorDetails", () => {
     fetchMock
       .mockResolvedValueOnce(new Response(JSON.stringify(monitor), { status: 200 }))
       .mockReturnValueOnce(new Promise<Response>((resolve) => { finishPause = resolve }))
-    render(<MonitorDetails monitorId={monitor.id} />)
+    render(<MonitorDetails monitorId={monitor.id} returnHref={returnHref} />)
 
     fireEvent.click(await screen.findByRole("button", { name: "Pause monitor" }))
     fireEvent.click(within(screen.getByRole("dialog", { name: "Pause Owned details API?" })).getByRole("button", { name: "Pause monitor" }))

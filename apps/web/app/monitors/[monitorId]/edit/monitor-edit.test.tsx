@@ -12,6 +12,7 @@ vi.mock("next/navigation", () => ({
 }))
 
 const fetchMock = vi.fn()
+const returnHref = "/monitors?page=2&page_size=25"
 const monitor: MonitorDto = {
   id: "monitor-owned",
   name: "Current monitor name",
@@ -43,7 +44,7 @@ afterEach(() => {
 describe("MonitorEdit", () => {
   it("loads the owner monitor and renders every current value", async () => {
     fetchMock.mockResolvedValue(new Response(JSON.stringify(monitor), { status: 200 }))
-    render(<MonitorEdit monitorId={monitor.id} />)
+    render(<MonitorEdit monitorId={monitor.id} returnHref={returnHref} />)
 
     expect(screen.getByText("Loading monitor configuration")).toBeTruthy()
     expect(await screen.findByText("Edit monitor")).toBeTruthy()
@@ -51,11 +52,12 @@ describe("MonitorEdit", () => {
     expect((screen.getByLabelText("URL") as HTMLInputElement).value).toBe("https://example.com/health")
     expect((screen.getByLabelText("HTTP method") as HTMLSelectElement).value).toBe("HEAD")
     expect((screen.getByLabelText("Interval (seconds)") as HTMLInputElement).value).toBe("300")
+    expect(screen.getByRole("link", { name: "Back to monitor" }).getAttribute("href")).toBe("/monitors/monitor-owned?return_to=%2Fmonitors%3Fpage%3D2%26page_size%3D25")
   })
 
   it("renders the ownership-safe missing state", async () => {
     fetchMock.mockResolvedValue(new Response(null, { status: 404 }))
-    render(<MonitorEdit monitorId="missing" />)
+    render(<MonitorEdit monitorId="missing" returnHref={returnHref} />)
     expect(await screen.findByText("Monitor not found")).toBeTruthy()
     expect(screen.getByText("This monitor does not exist or is not available to your account.")).toBeTruthy()
   })
@@ -64,7 +66,7 @@ describe("MonitorEdit", () => {
     fetchMock
       .mockResolvedValueOnce(new Response(null, { status: 503 }))
       .mockResolvedValueOnce(new Response(JSON.stringify(monitor), { status: 200 }))
-    render(<MonitorEdit monitorId={monitor.id} />)
+    render(<MonitorEdit monitorId={monitor.id} returnHref={returnHref} />)
 
     fireEvent.click(await screen.findByRole("button", { name: "Try again" }))
     expect(await screen.findByDisplayValue("Current monitor name")).toBeTruthy()

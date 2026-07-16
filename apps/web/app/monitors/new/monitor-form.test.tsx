@@ -1,4 +1,5 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
+import Link from "next/link"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { MonitorForm } from "./monitor-form"
@@ -141,11 +142,12 @@ describe("MonitorForm", () => {
   })
 
   it("prefills and submits the complete edit configuration", async () => {
+    const successHref = "/monitors/monitor-1?return_to=%2Fmonitors%3Fpage%3D2%26page_size%3D25"
     fetchMock.mockResolvedValue(new Response(JSON.stringify({
       ...existingMonitor,
       name: "Updated API",
     }), { status: 200 }))
-    render(<MonitorForm monitor={existingMonitor} />)
+    render(<MonitorForm monitor={existingMonitor} successHref={successHref} />)
 
     expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("Existing API")
     expect((screen.getByLabelText("URL") as HTMLInputElement).value).toBe("https://example.com/current")
@@ -158,6 +160,9 @@ describe("MonitorForm", () => {
     expect((screen.getByLabelText("Recovery threshold") as HTMLInputElement).value).toBe("5")
 
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Updated API" } })
+    const dirtyUnload = new Event("beforeunload", { cancelable: true })
+    window.dispatchEvent(dirtyUnload)
+    expect(dirtyUnload.defaultPrevented).toBe(true)
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Save changes" })))
 
     const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit]
@@ -169,8 +174,40 @@ describe("MonitorForm", () => {
       http_method: "HEAD",
       interval_seconds: 300,
     })
-    expect(navigationMock.push).toHaveBeenCalledWith("/monitors/monitor-1")
+    expect(navigationMock.push).toHaveBeenCalledWith(successHref)
     expect(navigationMock.refresh).toHaveBeenCalledOnce()
+    const savedUnload = new Event("beforeunload", { cancelable: true })
+    window.dispatchEvent(savedUnload)
+    expect(savedUnload.defaultPrevented).toBe(false)
+  })
+
+  it("warns before internal navigation when edit values are unsaved", async () => {
+    render(<><Link href="/monitors?page=4&page_size=25">All monitors</Link><MonitorForm monitor={existingMonitor} /></>)
+    const navigationTrigger = screen.getByRole("link", { name: "All monitors" })
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Unsaved API" } })
+
+    fireEvent.click(navigationTrigger)
+    expect(screen.getByRole("dialog", { name: "Discard unsaved changes?" })).toBeTruthy()
+    expect(navigationMock.push).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole("button", { name: "Keep editing" }))
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull())
+    await waitFor(() => expect(document.activeElement).toBe(navigationTrigger))
+
+    fireEvent.click(navigationTrigger)
+    fireEvent.click(screen.getByRole("button", { name: "Discard changes" }))
+    expect(navigationMock.push).toHaveBeenCalledWith("/monitors?page=4&page_size=25")
+  })
+
+  it("does not warn after edit values are restored to their saved state", () => {
+    render(<MonitorForm monitor={existingMonitor} />)
+    const name = screen.getByLabelText("Name")
+    fireEvent.change(name, { target: { value: "Temporary name" } })
+    fireEvent.change(name, { target: { value: existingMonitor.name } })
+
+    const unload = new Event("beforeunload", { cancelable: true })
+    window.dispatchEvent(unload)
+    expect(unload.defaultPrevented).toBe(false)
   })
 
   it("uses the same client validation path when editing", async () => {
