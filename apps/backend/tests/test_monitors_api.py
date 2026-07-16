@@ -14,6 +14,7 @@ from app.database import create_database_engine, get_database_session
 from app.main import app
 from app.models import Monitor, User
 from app.routes.auth import AuthenticatedSession, require_authenticated_session
+from app.security.monitor_destinations import get_destination_resolver
 
 
 VALID_MONITOR = {
@@ -27,6 +28,21 @@ VALID_MONITOR = {
     "failure_threshold": 3,
     "recovery_threshold": 2,
 }
+
+
+async def public_destination_resolver(_hostname: str, _port: int) -> list[str]:
+    return ["93.184.216.34", "2606:4700:4700::1111"]
+
+
+@pytest.fixture(autouse=True)
+def controlled_destination_resolution():
+    app.dependency_overrides[get_destination_resolver] = (
+        lambda: public_destination_resolver
+    )
+    try:
+        yield
+    finally:
+        app.dependency_overrides.pop(get_destination_resolver, None)
 
 
 def database_url() -> str:
@@ -277,6 +293,63 @@ def test_monitor_creation_persists_normalized_url() -> None:
     assert response.json()["url"] == "https://xn--bcher-kva.example/Health?ready=1"
     monitor = asyncio.run(stored_monitor(UUID(response.json()["id"])))
     assert monitor.url == "https://xn--bcher-kva.example/Health?ready=1"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://127.0.0.1",
+        "http://[::1]",
+        "http://localhost",
+        "http://169.254.169.254/latest/meta-data",
+        "http://2130706433",
+    ],
+)
+def test_monitor_creation_rejects_non_public_destinations(url: str) -> None:
+    owner, _ = asyncio.run(reset_users_and_create_two())
+    app.dependency_overrides[get_database_session] = override_database_session
+    app.dependency_overrides[require_authenticated_session] = authenticated_as(owner)
+    try:
+        with TestClient(app) as client:
+            response = client.post("/monitors", json={**VALID_MONITOR, "url": url})
+    finally:
+        app.dependency_overrides.pop(get_database_session, None)
+        app.dependency_overrides.pop(require_authenticated_session, None)
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "detail": {
+            "code": "unsafe_monitor_destination",
+            "message": "Monitor URL must resolve to a public destination.",
+        }
+    }
+    assert asyncio.run(stored_monitor_ids_for_user(owner.id)) == []
+
+
+def test_monitor_creation_rejects_hostname_resolving_to_private_address() -> None:
+    async def private_destination_resolver(_hostname: str, _port: int) -> list[str]:
+        return ["93.184.216.34", "10.0.0.5"]
+
+    owner, _ = asyncio.run(reset_users_and_create_two())
+    app.dependency_overrides[get_database_session] = override_database_session
+    app.dependency_overrides[require_authenticated_session] = authenticated_as(owner)
+    app.dependency_overrides[get_destination_resolver] = (
+        lambda: private_destination_resolver
+    )
+    try:
+        with TestClient(app) as client:
+            response = client.post("/monitors", json=VALID_MONITOR)
+    finally:
+        app.dependency_overrides.pop(get_database_session, None)
+        app.dependency_overrides.pop(require_authenticated_session, None)
+        app.dependency_overrides[get_destination_resolver] = (
+            lambda: public_destination_resolver
+        )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "unsafe_monitor_destination"
+    assert "10.0.0.5" not in response.text
+    assert asyncio.run(stored_monitor_ids_for_user(owner.id)) == []
 
 
 class FailingDatabaseSession:
