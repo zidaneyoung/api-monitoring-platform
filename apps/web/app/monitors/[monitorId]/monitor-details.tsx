@@ -8,7 +8,7 @@ import { StatusBadge } from "@/components/status-badge"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { getMonitor, type MonitorDto } from "@/lib/monitor-api"
-import { MonitorPauseButton } from "../monitor-pause-button"
+import { MonitorStateButton } from "../monitor-pause-button"
 
 
 type DetailsState =
@@ -98,7 +98,7 @@ function DetailsContent({
         <div className="min-w-0"><div className="flex flex-wrap items-center gap-4"><h1 className="text-[2.25rem] font-semibold tracking-[-0.045em] sm:text-[2.45rem]">{monitor.name}</h1><StatusBadge status={monitor.status} className="px-3 py-1 text-base" /></div><a className="mt-1 block break-all text-base font-semibold text-link hover:underline" href={monitor.url}>{monitor.url}</a></div>
         <div className="flex flex-wrap items-center gap-3">
           <Link className={buttonVariants({ variant: "outline", size: "lg", className: "h-10 px-4" })} href={`/monitors/${monitor.id}/edit`}><PencilIcon data-icon="inline-start" />Edit</Link>
-          <MonitorPauseButton className="h-10 px-4" monitor={monitor} onPaused={onMonitorChange} />
+          <MonitorStateButton className="h-10 px-4" monitor={monitor} onChanged={onMonitorChange} />
           <Button className="h-10 px-4" variant="destructive" size="lg" type="button" disabled><Trash2Icon data-icon="inline-start" />Delete</Button>
         </div>
       </header>

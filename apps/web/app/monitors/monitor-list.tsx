@@ -27,7 +27,7 @@ import {
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { cn } from "@/lib/utils"
 import { listMonitors, type MonitorDto, type MonitorListDto } from "@/lib/monitor-api"
-import { MonitorPauseButton } from "./monitor-pause-button"
+import { MonitorStateButton } from "./monitor-pause-button"
 
 
 type ListState =
@@ -94,7 +94,7 @@ function MonitorActions({
           <Link className={cn(buttonVariants({ variant: "outline", size: "lg" }), "justify-start")} href={`/monitors/${monitor.id}/edit`}>
             <PencilIcon data-icon="inline-start" />Edit monitor
           </Link>
-          <MonitorPauseButton className="justify-start" monitor={monitor} onPaused={(updated) => { onMonitorChange(updated); setOpen(false) }} />
+          <MonitorStateButton className="justify-start" monitor={monitor} onChanged={(updated) => { onMonitorChange(updated); setOpen(false) }} />
           <DialogClose render={<Button className="justify-start" variant="destructive" size="lg" disabled />}>
             <Trash2Icon data-icon="inline-start" />Delete monitor
           </DialogClose>

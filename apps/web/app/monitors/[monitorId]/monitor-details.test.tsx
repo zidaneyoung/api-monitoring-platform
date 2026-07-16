@@ -85,7 +85,25 @@ describe("MonitorDetails", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Pause monitor" }))
     const resume = await screen.findByRole("button", { name: "Resume monitor" })
-    expect(resume.hasAttribute("disabled")).toBe(true)
+    expect(resume.hasAttribute("disabled")).toBe(false)
     expect(fetchMock.mock.calls[1]?.[0]).toBe("http://localhost:8000/monitors/monitor-owned/pause")
+  })
+
+  it("resumes and immediately renders an active future schedule", async () => {
+    const paused = { ...monitor, status: "paused", next_check_at: null }
+    const resumed = {
+      ...monitor,
+      status: "unknown",
+      next_check_at: "2026-07-16T20:01:00Z",
+    }
+    fetchMock
+      .mockResolvedValueOnce(new Response(JSON.stringify(paused), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(resumed), { status: 200 }))
+    render(<MonitorDetails monitorId={monitor.id} />)
+
+    fireEvent.click(await screen.findByRole("button", { name: "Resume monitor" }))
+    expect(await screen.findByRole("button", { name: "Pause monitor" })).toBeTruthy()
+    expect(screen.getAllByText("Unknown").length).toBeGreaterThan(0)
+    expect(fetchMock.mock.calls[1]?.[0]).toBe("http://localhost:8000/monitors/monitor-owned/resume")
   })
 })

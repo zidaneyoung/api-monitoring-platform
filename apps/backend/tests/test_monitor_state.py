@@ -46,3 +46,17 @@ def test_queued_work_contract_rechecks_current_persisted_state() -> None:
     assert monitor_can_execute_request(active) is True
     assert monitor_can_execute_request(paused) is False
     assert monitor_can_execute_request(None) is False
+
+
+def test_resumed_monitor_becomes_executable_then_scheduler_eligible_when_due() -> None:
+    now = datetime.now(timezone.utc)
+    next_check_at = now + timedelta(seconds=60)
+    resumed = monitor(
+        status="unknown",
+        enabled=True,
+        next_check_at=next_check_at,
+    )
+
+    assert monitor_can_execute_request(resumed) is True
+    assert monitor_is_scheduler_eligible(resumed, now) is False
+    assert monitor_is_scheduler_eligible(resumed, next_check_at) is True
