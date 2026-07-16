@@ -28,6 +28,7 @@ export type MonitorCreatePayload = Omit<
   | "latest_response_time_ms"
   | "latest_status_code"
 >
+export type MonitorUpdatePayload = MonitorCreatePayload
 
 export type MonitorListDto = {
   items: MonitorDto[]
@@ -158,6 +159,37 @@ export async function createMonitor(
     if (response.status === 422) {
       return { type: "validation", errors: await readValidationErrors(response) }
     }
+    if (response.status === 401) return { type: "unauthenticated" }
+    if (response.status === 503) return { type: "unavailable" }
+    return { type: "unexpected_response" }
+  } catch (error) {
+    return requestFailure(error)
+  }
+}
+
+export async function updateMonitor(
+  monitorId: string,
+  payload: MonitorUpdatePayload,
+): Promise<MonitorOutcome<MonitorDto>> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/monitors/${encodeURIComponent(monitorId)}`, {
+      method: "PUT",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(MONITOR_REQUEST_TIMEOUT_MS),
+    })
+
+    if (response.ok) {
+      const monitor = await readMonitor(response)
+      return monitor
+        ? { type: "success", data: monitor }
+        : { type: "unexpected_response" }
+    }
+    if (response.status === 422) {
+      return { type: "validation", errors: await readValidationErrors(response) }
+    }
+    if (response.status === 404) return { type: "not_found" }
     if (response.status === 401) return { type: "unauthenticated" }
     if (response.status === 503) return { type: "unavailable" }
     return { type: "unexpected_response" }

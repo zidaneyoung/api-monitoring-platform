@@ -38,6 +38,10 @@ class MonitorCreate(BaseModel):
         return value
 
 
+class MonitorUpdate(MonitorCreate):
+    """A complete monitor configuration update using creation validation."""
+
+
 class MonitorResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

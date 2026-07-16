@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.database import create_database_engine, get_database_session
 from app.main import app
-from app.models import Monitor, User
+from app.models import Incident, Monitor, MonitorCheck, User
 from app.routes.auth import AuthenticatedSession, require_authenticated_session
 from app.security.monitor_destinations import get_destination_resolver
 
@@ -140,6 +140,51 @@ async def add_monitors(
             session.add_all(monitors)
             await session.commit()
             return [monitor.id for monitor in monitors]
+    finally:
+        await engine.dispose()
+
+
+async def add_monitor_history(monitor_id: UUID, user_id: UUID) -> tuple[UUID, UUID]:
+    engine = create_database_engine(database_url())
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        async with sessions() as session:
+            now = datetime.now(timezone.utc)
+            check = MonitorCheck(
+                monitor_id=monitor_id,
+                started_at=now,
+                completed_at=now,
+                success=True,
+                response_time_ms=42,
+                http_status_code=200,
+            )
+            incident = Incident(
+                monitor_id=monitor_id,
+                user_id=user_id,
+                status="resolved",
+                opened_at=now,
+                detected_at=now,
+                resolved_at=now,
+            )
+            session.add_all([check, incident])
+            await session.commit()
+            return check.id, incident.id
+    finally:
+        await engine.dispose()
+
+
+async def monitor_history_ids(monitor_id: UUID) -> tuple[list[UUID], list[UUID]]:
+    engine = create_database_engine(database_url())
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        async with sessions() as session:
+            checks = await session.scalars(
+                select(MonitorCheck.id).where(MonitorCheck.monitor_id == monitor_id)
+            )
+            incidents = await session.scalars(
+                select(Incident.id).where(Incident.monitor_id == monitor_id)
+            )
+            return list(checks), list(incidents)
     finally:
         await engine.dispose()
 
@@ -559,3 +604,144 @@ def test_foreign_and_missing_monitor_details_share_controlled_response() -> None
     assert missing_response.status_code == 404
     assert foreign_response.json() == expected
     assert missing_response.json() == expected
+
+
+def test_owner_update_preserves_identity_history_and_reschedules_interval() -> None:
+    owner, _ = asyncio.run(reset_users_and_create_two())
+    monitor_id = asyncio.run(add_monitors(owner.id, ["Before edit"], statuses=["up"]))[0]
+    check_id, incident_id = asyncio.run(add_monitor_history(monitor_id, owner.id))
+    before = datetime.now(timezone.utc)
+    payload = {
+        **VALID_MONITOR,
+        "name": "After edit",
+        "url": " HTTPS://UPDATES.example/Health ",
+        "http_method": "HEAD",
+        "interval_seconds": 600,
+        "timeout_seconds": 20,
+        "expected_status_min": 201,
+        "expected_status_max": 299,
+        "failure_threshold": 4,
+        "recovery_threshold": 5,
+    }
+    app.dependency_overrides[get_database_session] = override_database_session
+    app.dependency_overrides[require_authenticated_session] = authenticated_as(owner)
+    try:
+        with TestClient(app) as client:
+            response = client.put(f"/monitors/{monitor_id}", json=payload)
+    finally:
+        app.dependency_overrides.pop(get_database_session, None)
+        app.dependency_overrides.pop(require_authenticated_session, None)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == str(monitor_id)
+    assert body["name"] == "After edit"
+    assert body["url"] == "https://updates.example/Health"
+    assert body["http_method"] == "HEAD"
+    assert body["status"] == "up"
+    assert body["next_check_at"] is not None
+    next_check_at = datetime.fromisoformat(body["next_check_at"])
+    assert before.timestamp() + 599 <= next_check_at.timestamp()
+
+    monitor = asyncio.run(stored_monitor(monitor_id))
+    assert monitor.id == monitor_id
+    assert monitor.interval_seconds == 600
+    assert monitor.timeout_seconds == 20
+    assert monitor.expected_status_min == 201
+    assert monitor.expected_status_max == 299
+    assert monitor.failure_threshold == 4
+    assert monitor.recovery_threshold == 5
+    assert asyncio.run(stored_monitor_ids_for_user(owner.id)) == [monitor_id]
+    assert asyncio.run(monitor_history_ids(monitor_id)) == ([check_id], [incident_id])
+
+
+def test_invalid_update_is_rejected_without_partial_changes() -> None:
+    owner, _ = asyncio.run(reset_users_and_create_two())
+    monitor_id = asyncio.run(add_monitors(owner.id, ["Atomic edit"]))[0]
+    original = asyncio.run(stored_monitor(monitor_id))
+    original_values = (original.name, original.interval_seconds, original.next_check_at)
+    payload = {
+        **VALID_MONITOR,
+        "name": "Must not persist",
+        "interval_seconds": 900,
+        "expected_status_min": 400,
+        "expected_status_max": 399,
+    }
+    app.dependency_overrides[get_database_session] = override_database_session
+    app.dependency_overrides[require_authenticated_session] = authenticated_as(owner)
+    try:
+        with TestClient(app) as client:
+            response = client.put(f"/monitors/{monitor_id}", json=payload)
+    finally:
+        app.dependency_overrides.pop(get_database_session, None)
+        app.dependency_overrides.pop(require_authenticated_session, None)
+
+    assert response.status_code == 422
+    stored = asyncio.run(stored_monitor(monitor_id))
+    assert (stored.name, stored.interval_seconds, stored.next_check_at) == original_values
+
+
+def test_update_revalidates_hostname_and_rejects_private_resolution_atomically() -> None:
+    async def private_destination_resolver(_hostname: str, _port: int) -> list[str]:
+        return ["10.0.0.8"]
+
+    owner, _ = asyncio.run(reset_users_and_create_two())
+    monitor_id = asyncio.run(add_monitors(owner.id, ["Secure edit"]))[0]
+    app.dependency_overrides[get_database_session] = override_database_session
+    app.dependency_overrides[require_authenticated_session] = authenticated_as(owner)
+    app.dependency_overrides[get_destination_resolver] = (
+        lambda: private_destination_resolver
+    )
+    try:
+        with TestClient(app) as client:
+            response = client.put(
+                f"/monitors/{monitor_id}",
+                json={**VALID_MONITOR, "name": "Unsafe edit", "url": "https://rebind.example"},
+            )
+    finally:
+        app.dependency_overrides.pop(get_database_session, None)
+        app.dependency_overrides.pop(require_authenticated_session, None)
+        app.dependency_overrides[get_destination_resolver] = (
+            lambda: public_destination_resolver
+        )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "unsafe_monitor_destination"
+    assert "10.0.0.8" not in response.text
+    assert asyncio.run(stored_monitor(monitor_id)).name == "Secure edit"
+
+
+def test_foreign_and_missing_updates_share_controlled_response() -> None:
+    owner, other = asyncio.run(reset_users_and_create_two())
+    foreign_id = asyncio.run(add_monitors(other.id, ["Foreign edit"]))[0]
+    app.dependency_overrides[get_database_session] = override_database_session
+    app.dependency_overrides[require_authenticated_session] = authenticated_as(owner)
+    try:
+        with TestClient(app) as client:
+            foreign_response = client.put(f"/monitors/{foreign_id}", json=VALID_MONITOR)
+            missing_response = client.put(f"/monitors/{uuid4()}", json=VALID_MONITOR)
+    finally:
+        app.dependency_overrides.pop(get_database_session, None)
+        app.dependency_overrides.pop(require_authenticated_session, None)
+
+    expected = {
+        "detail": {"code": "monitor_not_found", "message": "Monitor not found."}
+    }
+    assert foreign_response.status_code == 404
+    assert missing_response.status_code == 404
+    assert foreign_response.json() == missing_response.json() == expected
+    assert asyncio.run(stored_monitor(foreign_id)).name == "Foreign edit"
+
+
+def test_monitor_update_requires_authentication() -> None:
+    owner, _ = asyncio.run(reset_users_and_create_two())
+    monitor_id = asyncio.run(add_monitors(owner.id, ["Protected edit"]))[0]
+    app.dependency_overrides[get_database_session] = override_database_session
+    try:
+        with TestClient(app) as client:
+            response = client.put(f"/monitors/{monitor_id}", json=VALID_MONITOR)
+    finally:
+        app.dependency_overrides.pop(get_database_session, None)
+
+    assert response.status_code == 401
+    assert asyncio.run(stored_monitor(monitor_id)).name == "Protected edit"

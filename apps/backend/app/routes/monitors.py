@@ -9,7 +9,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_database_session
 from app.models import Monitor
 from app.routes.auth import AuthenticatedSession, require_authenticated_session
-from app.schemas.monitor import MonitorCreate, MonitorListResponse, MonitorResponse
+from app.schemas.monitor import (
+    MonitorCreate,
+    MonitorListResponse,
+    MonitorResponse,
+    MonitorUpdate,
+)
 from app.security.monitor_destinations import (
     DestinationResolver,
     DestinationSecurityError,
@@ -19,6 +24,17 @@ from app.security.monitor_destinations import (
 
 
 router = APIRouter(prefix="/monitors", tags=["monitors"])
+_CONFIGURATION_FIELDS = (
+    "name",
+    "url",
+    "http_method",
+    "interval_seconds",
+    "timeout_seconds",
+    "expected_status_min",
+    "expected_status_max",
+    "failure_threshold",
+    "recovery_threshold",
+)
 
 
 def _monitor_not_found_error() -> HTTPException:
@@ -29,6 +45,53 @@ def _monitor_not_found_error() -> HTTPException:
             "message": "Monitor not found.",
         },
     )
+
+
+def _database_unavailable_error(message: str) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail={
+            "code": "database_unavailable",
+            "message": message,
+        },
+    )
+
+
+def _unsafe_destination_error() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail={
+            "code": "unsafe_monitor_destination",
+            "message": "Monitor URL must resolve to a public destination.",
+        },
+    )
+
+
+async def _owned_monitor(
+    session: AsyncSession,
+    monitor_id: UUID,
+    owner_id: UUID,
+) -> Monitor:
+    result = await session.execute(
+        select(Monitor).where(
+            Monitor.id == monitor_id,
+            Monitor.user_id == owner_id,
+        )
+    )
+    monitor = result.scalar_one_or_none()
+    if monitor is None:
+        raise _monitor_not_found_error()
+    return monitor
+
+
+async def _validate_destination(
+    url: str,
+    destination_resolver: DestinationResolver,
+) -> None:
+    try:
+        await validate_monitor_destination(url, destination_resolver)
+    except DestinationSecurityError:
+        raise _unsafe_destination_error() from None
 
 
 @router.get("", response_model=MonitorListResponse)
@@ -70,15 +133,45 @@ async def get_monitor(
     authenticated: AuthenticatedSession = Depends(require_authenticated_session),
     session: AsyncSession = Depends(get_database_session),
 ) -> Monitor:
-    result = await session.execute(
-        select(Monitor).where(
-            Monitor.id == monitor_id,
-            Monitor.user_id == authenticated.user.id,
+    return await _owned_monitor(session, monitor_id, authenticated.user.id)
+
+
+@router.put(
+    "/{monitor_id}",
+    response_model=MonitorResponse,
+    responses={
+        status.HTTP_401_UNAUTHORIZED: {"description": "Authentication required."},
+        status.HTTP_404_NOT_FOUND: {"description": "Monitor not found."},
+        status.HTTP_503_SERVICE_UNAVAILABLE: {
+            "description": "Monitor storage unavailable."
+        },
+    },
+)
+async def update_monitor(
+    monitor_id: UUID,
+    payload: MonitorUpdate,
+    authenticated: AuthenticatedSession = Depends(require_authenticated_session),
+    session: AsyncSession = Depends(get_database_session),
+    destination_resolver: DestinationResolver = Depends(get_destination_resolver),
+) -> Monitor:
+    monitor = await _owned_monitor(session, monitor_id, authenticated.user.id)
+    await _validate_destination(payload.url, destination_resolver)
+
+    interval_changed = monitor.interval_seconds != payload.interval_seconds
+    for field in _CONFIGURATION_FIELDS:
+        setattr(monitor, field, getattr(payload, field))
+    if interval_changed and monitor.is_enabled:
+        monitor.next_check_at = datetime.now(timezone.utc) + timedelta(
+            seconds=payload.interval_seconds
         )
-    )
-    monitor = result.scalar_one_or_none()
-    if monitor is None:
-        raise _monitor_not_found_error()
+
+    try:
+        await session.commit()
+    except SQLAlchemyError:
+        await session.rollback()
+        raise _database_unavailable_error(
+            "Unable to update the monitor. Try again later."
+        ) from None
     return monitor
 
 
@@ -99,16 +192,7 @@ async def create_monitor(
     session: AsyncSession = Depends(get_database_session),
     destination_resolver: DestinationResolver = Depends(get_destination_resolver),
 ) -> Monitor:
-    try:
-        await validate_monitor_destination(payload.url, destination_resolver)
-    except DestinationSecurityError:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail={
-                "code": "unsafe_monitor_destination",
-                "message": "Monitor URL must resolve to a public destination.",
-            },
-        ) from None
+    await _validate_destination(payload.url, destination_resolver)
 
     monitor = Monitor(
         id=uuid4(),
@@ -134,11 +218,7 @@ async def create_monitor(
         await session.commit()
     except SQLAlchemyError:
         await session.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={
-                "code": "database_unavailable",
-                "message": "Unable to create the monitor. Try again later.",
-            },
+        raise _database_unavailable_error(
+            "Unable to create the monitor. Try again later."
         ) from None
     return monitor

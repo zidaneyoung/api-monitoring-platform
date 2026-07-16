@@ -70,6 +70,8 @@ describe("MonitorList", () => {
     expect(screen.getAllByText("204").length).toBeGreaterThan(0)
     expect(screen.getAllByText("Not checked yet").length).toBeGreaterThan(0)
     expect(screen.queryByText("Checkout")).toBeNull()
+    fireEvent.click(screen.getAllByRole("button", { name: "Actions for Owner unknown API" })[0])
+    expect((await screen.findByRole("link", { name: "Edit monitor" })).getAttribute("href")).toBe("/monitors/monitor-unknown/edit")
   })
 
   it("renders the backend empty state", async () => {

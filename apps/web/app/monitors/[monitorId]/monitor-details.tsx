@@ -92,7 +92,7 @@ function DetailsContent({ monitor }: { monitor: MonitorDto }) {
       <header className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
         <div className="min-w-0"><div className="flex flex-wrap items-center gap-4"><h1 className="text-[2.25rem] font-semibold tracking-[-0.045em] sm:text-[2.45rem]">{monitor.name}</h1><StatusBadge status={monitor.status} className="px-3 py-1 text-base" /></div><a className="mt-1 block break-all text-base font-semibold text-link hover:underline" href={monitor.url}>{monitor.url}</a></div>
         <div className="flex flex-wrap items-center gap-3">
-          <Button className="h-10 px-4" variant="outline" size="lg" type="button" disabled><PencilIcon data-icon="inline-start" />Edit</Button>
+          <Link className={buttonVariants({ variant: "outline", size: "lg", className: "h-10 px-4" })} href={`/monitors/${monitor.id}/edit`}><PencilIcon data-icon="inline-start" />Edit</Link>
           <Button className="h-10 px-4" variant="outline" size="lg" type="button" disabled>{isPaused ? <PlayIcon data-icon="inline-start" /> : <PauseIcon data-icon="inline-start" />}{isPaused ? "Resume" : "Pause"}</Button>
           <Button className="h-10 px-4" variant="destructive" size="lg" type="button" disabled><Trash2Icon data-icon="inline-start" />Delete</Button>
         </div>

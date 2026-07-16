@@ -86,9 +86,9 @@ function MonitorActions({ monitor }: { monitor: MonitorDto }) {
           <DialogDescription>Monitor mutations are not available yet.</DialogDescription>
         </DialogHeader>
         <div className="grid gap-2">
-          <DialogClose render={<Button className="justify-start" variant="outline" size="lg" disabled />}>
+          <Link className={cn(buttonVariants({ variant: "outline", size: "lg" }), "justify-start")} href={`/monitors/${monitor.id}/edit`}>
             <PencilIcon data-icon="inline-start" />Edit monitor
-          </DialogClose>
+          </Link>
           <DialogClose render={<Button className="justify-start" variant="outline" size="lg" disabled />}>
             {isPaused ? <PlayIcon data-icon="inline-start" /> : <PauseIcon data-icon="inline-start" />}
             {isPaused ? "Resume monitor" : "Pause monitor"}
