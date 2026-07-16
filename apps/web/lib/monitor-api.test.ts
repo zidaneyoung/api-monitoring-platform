@@ -83,8 +83,13 @@ describe("createMonitor", () => {
 
   it.each([
     [401, { type: "unauthenticated" }],
+    [403, { type: "forbidden" }],
+    [404, { type: "not_found" }],
+    [409, { type: "conflict" }],
+    [429, { type: "rate_limited" }],
     [503, { type: "unavailable" }],
-    [500, { type: "unexpected_response" }],
+    [500, { type: "internal_error" }],
+    [400, { type: "unexpected_response" }],
   ])("maps status %s without exposing response details", async (status, expected) => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(
       JSON.stringify({ detail: "sensitive internal detail" }),
@@ -165,7 +170,7 @@ describe("listMonitors", () => {
   it.each([
     [401, { type: "unauthenticated" }],
     [503, { type: "unavailable" }],
-    [500, { type: "unexpected_response" }],
+    [500, { type: "internal_error" }],
   ])("maps list status %s to a controlled outcome", async (status, expected) => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status })))
     await expect(listMonitors(1, 10)).resolves.toEqual(expected)
@@ -198,7 +203,7 @@ describe("getMonitor", () => {
     [404, { type: "not_found" }],
     [401, { type: "unauthenticated" }],
     [503, { type: "unavailable" }],
-    [500, { type: "unexpected_response" }],
+    [500, { type: "internal_error" }],
   ])("maps detail status %s to a controlled outcome", async (status, expected) => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status })))
     await expect(getMonitor("monitor-1")).resolves.toEqual(expected)

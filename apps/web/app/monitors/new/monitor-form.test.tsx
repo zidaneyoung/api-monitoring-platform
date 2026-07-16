@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { MonitorForm } from "./monitor-form"
@@ -51,6 +51,9 @@ describe("MonitorForm", () => {
   it("renders all configuration fields with safe defaults", () => {
     render(<MonitorForm />)
 
+    expect(screen.getByText("Endpoint")).toBeTruthy()
+    expect(screen.getByText("Schedule")).toBeTruthy()
+    expect(screen.getByText("Success Criteria")).toBeTruthy()
     expect(screen.getByLabelText("Name")).toBeTruthy()
     expect(screen.getByLabelText("URL")).toBeTruthy()
     expect((screen.getByLabelText("HTTP method") as HTMLSelectElement).value).toBe("GET")
@@ -95,10 +98,32 @@ describe("MonitorForm", () => {
     fireEvent.click(screen.getByRole("button", { name: "Create monitor" }))
 
     expect(await screen.findByText("Monitor URL must resolve to a public destination.")).toBeTruthy()
+    await waitFor(() => expect(document.activeElement?.id).toBe("monitor-error-summary"))
     expect(screen.getByLabelText("URL").getAttribute("aria-invalid")).toBe("true")
+    expect(screen.getByLabelText("URL").getAttribute("aria-describedby")).toContain("monitor-url-error")
     expect(screen.getByLabelText("Name").getAttribute("aria-invalid")).toBe("false")
     expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("Public API")
     expect(navigationMock.push).not.toHaveBeenCalled()
+  })
+
+  it("blocks invalid browser-safe values and links the focused summary to fields", async () => {
+    render(<MonitorForm />)
+
+    fireEvent.change(screen.getByLabelText("Interval (seconds)"), { target: { value: "0" } })
+    fireEvent.change(screen.getByLabelText("Minimum accepted status"), { target: { value: "500" } })
+    fireEvent.change(screen.getByLabelText("Maximum accepted status"), { target: { value: "400" } })
+    fireEvent.click(screen.getByRole("button", { name: "Create monitor" }))
+
+    expect(fetchMock).not.toHaveBeenCalled()
+    await waitFor(() => expect(document.activeElement?.id).toBe("monitor-error-summary"))
+    expect(screen.getByLabelText("Name").getAttribute("aria-invalid")).toBe("true")
+    expect(screen.getByLabelText("URL").getAttribute("aria-invalid")).toBe("true")
+    expect(screen.getByLabelText("HTTP method").getAttribute("aria-invalid")).toBe("false")
+    expect((screen.getByLabelText("Interval (seconds)") as HTMLInputElement).value).toBe("0")
+    expect((screen.getByLabelText("Minimum accepted status") as HTMLInputElement).value).toBe("500")
+
+    fireEvent.click(screen.getByRole("link", { name: /Name: Enter a monitor name/ }))
+    expect(document.activeElement).toBe(screen.getByLabelText("Name"))
   })
 
   it("shows a controlled service error and allows retry", async () => {
@@ -109,6 +134,8 @@ describe("MonitorForm", () => {
     fireEvent.click(screen.getByRole("button", { name: "Create monitor" }))
 
     expect(await screen.findByText("Monitor storage is temporarily unavailable. Try again.")).toBeTruthy()
+    expect(screen.getByTestId("monitor-general-errors")).toBeTruthy()
+    await waitFor(() => expect(document.activeElement?.id).toBe("monitor-error-summary"))
     expect(screen.getByRole("button", { name: "Create monitor" }).hasAttribute("disabled")).toBe(false)
     expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("Public API")
   })
@@ -144,5 +171,17 @@ describe("MonitorForm", () => {
     })
     expect(navigationMock.push).toHaveBeenCalledWith("/monitors/monitor-1")
     expect(navigationMock.refresh).toHaveBeenCalledOnce()
+  })
+
+  it("uses the same client validation path when editing", async () => {
+    render(<MonitorForm monitor={existingMonitor} />)
+    fireEvent.change(screen.getByLabelText("URL"), { target: { value: "file:///private" } })
+
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }))
+
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(await screen.findByText("Enter an HTTP or HTTPS URL.")).toBeTruthy()
+    expect(screen.getByLabelText("URL").getAttribute("aria-invalid")).toBe("true")
+    expect((screen.getByLabelText("URL") as HTMLInputElement).value).toBe("file:///private")
   })
 })
