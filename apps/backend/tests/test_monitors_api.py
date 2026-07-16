@@ -745,3 +745,62 @@ def test_monitor_update_requires_authentication() -> None:
 
     assert response.status_code == 401
     assert asyncio.run(stored_monitor(monitor_id)).name == "Protected edit"
+
+
+def test_owner_pause_persists_exclusion_and_preserves_configuration_history() -> None:
+    owner, _ = asyncio.run(reset_users_and_create_two())
+    monitor_id = asyncio.run(add_monitors(owner.id, ["Pause me"], statuses=["up"]))[0]
+    check_id, incident_id = asyncio.run(add_monitor_history(monitor_id, owner.id))
+    before = asyncio.run(stored_monitor(monitor_id))
+    configuration = (before.name, before.url, before.interval_seconds, before.timeout_seconds)
+    app.dependency_overrides[get_database_session] = override_database_session
+    app.dependency_overrides[require_authenticated_session] = authenticated_as(owner)
+    try:
+        with TestClient(app) as client:
+            first = client.post(f"/monitors/{monitor_id}/pause")
+            second = client.post(f"/monitors/{monitor_id}/pause")
+    finally:
+        app.dependency_overrides.pop(get_database_session, None)
+        app.dependency_overrides.pop(require_authenticated_session, None)
+
+    assert first.status_code == second.status_code == 200
+    assert first.json()["status"] == second.json()["status"] == "paused"
+    assert first.json()["next_check_at"] is None
+    stored = asyncio.run(stored_monitor(monitor_id))
+    assert stored.status == "paused"
+    assert stored.is_enabled is False
+    assert stored.next_check_at is None
+    assert (stored.name, stored.url, stored.interval_seconds, stored.timeout_seconds) == configuration
+    assert asyncio.run(monitor_history_ids(monitor_id)) == ([check_id], [incident_id])
+
+
+def test_foreign_and_missing_pause_share_controlled_response() -> None:
+    owner, other = asyncio.run(reset_users_and_create_two())
+    foreign_id = asyncio.run(add_monitors(other.id, ["Foreign pause"], statuses=["up"]))[0]
+    app.dependency_overrides[get_database_session] = override_database_session
+    app.dependency_overrides[require_authenticated_session] = authenticated_as(owner)
+    try:
+        with TestClient(app) as client:
+            foreign_response = client.post(f"/monitors/{foreign_id}/pause")
+            missing_response = client.post(f"/monitors/{uuid4()}/pause")
+    finally:
+        app.dependency_overrides.pop(get_database_session, None)
+        app.dependency_overrides.pop(require_authenticated_session, None)
+
+    assert foreign_response.status_code == missing_response.status_code == 404
+    assert foreign_response.json() == missing_response.json()
+    assert asyncio.run(stored_monitor(foreign_id)).status == "up"
+
+
+def test_monitor_pause_requires_authentication() -> None:
+    owner, _ = asyncio.run(reset_users_and_create_two())
+    monitor_id = asyncio.run(add_monitors(owner.id, ["Protected pause"], statuses=["up"]))[0]
+    app.dependency_overrides[get_database_session] = override_database_session
+    try:
+        with TestClient(app) as client:
+            response = client.post(f"/monitors/{monitor_id}/pause")
+    finally:
+        app.dependency_overrides.pop(get_database_session, None)
+
+    assert response.status_code == 401
+    assert asyncio.run(stored_monitor(monitor_id)).status == "up"

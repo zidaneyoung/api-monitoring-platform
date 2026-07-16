@@ -253,3 +253,28 @@ export async function getMonitor(
     return requestFailure(error)
   }
 }
+
+export async function pauseMonitor(
+  monitorId: string,
+): Promise<MonitorOutcome<MonitorDto>> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/monitors/${encodeURIComponent(monitorId)}/pause`, {
+      method: "POST",
+      credentials: "include",
+      signal: AbortSignal.timeout(MONITOR_REQUEST_TIMEOUT_MS),
+    })
+
+    if (response.ok) {
+      const monitor = await readMonitor(response)
+      return monitor
+        ? { type: "success", data: monitor }
+        : { type: "unexpected_response" }
+    }
+    if (response.status === 404) return { type: "not_found" }
+    if (response.status === 401) return { type: "unauthenticated" }
+    if (response.status === 503) return { type: "unavailable" }
+    return { type: "unexpected_response" }
+  } catch (error) {
+    return requestFailure(error)
+  }
+}

@@ -71,4 +71,21 @@ describe("MonitorDetails", () => {
     expect(await screen.findByText("Owned details API")).toBeTruthy()
     expect(fetchMock).toHaveBeenCalledTimes(2)
   })
+
+  it("confirms pause and immediately renders the persisted paused state", async () => {
+    vi.stubGlobal("confirm", vi.fn(() => true))
+    fetchMock
+      .mockResolvedValueOnce(new Response(JSON.stringify(monitor), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        ...monitor,
+        status: "paused",
+        next_check_at: null,
+      }), { status: 200 }))
+    render(<MonitorDetails monitorId={monitor.id} />)
+
+    fireEvent.click(await screen.findByRole("button", { name: "Pause monitor" }))
+    const resume = await screen.findByRole("button", { name: "Resume monitor" })
+    expect(resume.hasAttribute("disabled")).toBe(true)
+    expect(fetchMock.mock.calls[1]?.[0]).toBe("http://localhost:8000/monitors/monitor-owned/pause")
+  })
 })

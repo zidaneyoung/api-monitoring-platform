@@ -136,6 +136,43 @@ async def get_monitor(
     return await _owned_monitor(session, monitor_id, authenticated.user.id)
 
 
+@router.post(
+    "/{monitor_id}/pause",
+    response_model=MonitorResponse,
+    responses={
+        status.HTTP_401_UNAUTHORIZED: {"description": "Authentication required."},
+        status.HTTP_404_NOT_FOUND: {"description": "Monitor not found."},
+        status.HTTP_503_SERVICE_UNAVAILABLE: {
+            "description": "Monitor storage unavailable."
+        },
+    },
+)
+async def pause_monitor(
+    monitor_id: UUID,
+    authenticated: AuthenticatedSession = Depends(require_authenticated_session),
+    session: AsyncSession = Depends(get_database_session),
+) -> Monitor:
+    monitor = await _owned_monitor(session, monitor_id, authenticated.user.id)
+    if (
+        monitor.status == "paused"
+        and not monitor.is_enabled
+        and monitor.next_check_at is None
+    ):
+        return monitor
+
+    monitor.status = "paused"
+    monitor.is_enabled = False
+    monitor.next_check_at = None
+    try:
+        await session.commit()
+    except SQLAlchemyError:
+        await session.rollback()
+        raise _database_unavailable_error(
+            "Unable to pause the monitor. Try again later."
+        ) from None
+    return monitor
+
+
 @router.put(
     "/{monitor_id}",
     response_model=MonitorResponse,

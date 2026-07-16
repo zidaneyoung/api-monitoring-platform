@@ -1,13 +1,14 @@
 "use client"
 
 import Link from "next/link"
-import { ArrowLeftIcon, PauseIcon, PencilIcon, PlayIcon, Trash2Icon } from "lucide-react"
+import { ArrowLeftIcon, PencilIcon, Trash2Icon } from "lucide-react"
 import { useEffect, useState } from "react"
 
 import { StatusBadge } from "@/components/status-badge"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { getMonitor, type MonitorDto } from "@/lib/monitor-api"
+import { MonitorPauseButton } from "../monitor-pause-button"
 
 
 type DetailsState =
@@ -75,7 +76,13 @@ function MessageDetails({
   )
 }
 
-function DetailsContent({ monitor }: { monitor: MonitorDto }) {
+function DetailsContent({
+  monitor,
+  onMonitorChange,
+}: {
+  monitor: MonitorDto
+  onMonitorChange: (monitor: MonitorDto) => void
+}) {
   const configuration = [
     ["HTTP method", monitor.http_method],
     ["Interval", formatDuration(monitor.interval_seconds)],
@@ -84,8 +91,6 @@ function DetailsContent({ monitor }: { monitor: MonitorDto }) {
     ["Failure threshold", String(monitor.failure_threshold)],
     ["Recovery threshold", String(monitor.recovery_threshold)],
   ]
-  const isPaused = monitor.status === "paused"
-
   return (
     <main className="mx-auto flex w-full max-w-[94rem] flex-col gap-4 px-4 py-6 sm:px-6 lg:px-8 xl:px-11 xl:py-7">
       <Link className="inline-flex w-fit items-center gap-2 text-sm font-medium text-foreground transition-colors hover:text-link focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50" href="/monitors"><ArrowLeftIcon aria-hidden="true" />Back to monitors</Link>
@@ -93,7 +98,7 @@ function DetailsContent({ monitor }: { monitor: MonitorDto }) {
         <div className="min-w-0"><div className="flex flex-wrap items-center gap-4"><h1 className="text-[2.25rem] font-semibold tracking-[-0.045em] sm:text-[2.45rem]">{monitor.name}</h1><StatusBadge status={monitor.status} className="px-3 py-1 text-base" /></div><a className="mt-1 block break-all text-base font-semibold text-link hover:underline" href={monitor.url}>{monitor.url}</a></div>
         <div className="flex flex-wrap items-center gap-3">
           <Link className={buttonVariants({ variant: "outline", size: "lg", className: "h-10 px-4" })} href={`/monitors/${monitor.id}/edit`}><PencilIcon data-icon="inline-start" />Edit</Link>
-          <Button className="h-10 px-4" variant="outline" size="lg" type="button" disabled>{isPaused ? <PlayIcon data-icon="inline-start" /> : <PauseIcon data-icon="inline-start" />}{isPaused ? "Resume" : "Pause"}</Button>
+          <MonitorPauseButton className="h-10 px-4" monitor={monitor} onPaused={onMonitorChange} />
           <Button className="h-10 px-4" variant="destructive" size="lg" type="button" disabled><Trash2Icon data-icon="inline-start" />Delete</Button>
         </div>
       </header>
@@ -134,5 +139,5 @@ export function MonitorDetails({ monitorId }: { monitorId: string }) {
   if (state.type === "loading" || state.monitorId !== monitorId) return <LoadingDetails />
   if (state.type === "not_found") return <MessageDetails title="Monitor not found" description="This monitor does not exist or is not available to your account." />
   if (state.type === "error") return <MessageDetails title="Unable to display monitor" description="Monitor details could not be loaded. Try again." retry={() => { setState({ type: "loading", monitorId }); setRequestVersion((value) => value + 1) }} />
-  return <DetailsContent monitor={state.monitor} />
+  return <DetailsContent monitor={state.monitor} onMonitorChange={(monitor) => setState({ type: "ready", monitorId, monitor })} />
 }
