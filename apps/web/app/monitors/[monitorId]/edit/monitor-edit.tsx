@@ -7,6 +7,7 @@ import { useEffect, useState } from "react"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { getMonitor, type MonitorDto } from "@/lib/monitor-api"
+import { monitorDetailsHref, monitorListHref } from "@/lib/monitor-navigation"
 
 import { MonitorForm } from "../../new/monitor-form"
 
@@ -30,9 +31,11 @@ function LoadingEdit() {
 
 function EditMessage({
   monitorId,
+  returnHref,
   retry,
 }: {
   monitorId: string
+  returnHref: string
   retry?: () => void
 }) {
   return (
@@ -47,7 +50,7 @@ function EditMessage({
           </p>
           <div className="flex flex-wrap justify-center gap-2">
             {retry ? <Button variant="outline" type="button" onClick={retry}>Try again</Button> : null}
-            <Link className={buttonVariants({ variant: "outline" })} href={retry ? `/monitors/${monitorId}` : "/monitors"}>Back</Link>
+            <Link className={buttonVariants({ variant: "outline" })} href={retry ? monitorDetailsHref(monitorId, returnHref) : returnHref}>Back</Link>
           </div>
         </CardContent>
       </Card>
@@ -55,9 +58,16 @@ function EditMessage({
   )
 }
 
-export function MonitorEdit({ monitorId }: { monitorId: string }) {
+export function MonitorEdit({
+  monitorId,
+  returnHref = monitorListHref(),
+}: {
+  monitorId: string
+  returnHref?: string
+}) {
   const [requestVersion, setRequestVersion] = useState(0)
   const [state, setState] = useState<EditState>({ type: "loading", monitorId })
+  const detailsHref = monitorDetailsHref(monitorId, returnHref)
 
   useEffect(() => {
     let cancelled = false
@@ -71,12 +81,12 @@ export function MonitorEdit({ monitorId }: { monitorId: string }) {
   }, [monitorId, requestVersion])
 
   if (state.type === "loading" || state.monitorId !== monitorId) return <LoadingEdit />
-  if (state.type === "not_found") return <EditMessage monitorId={monitorId} />
-  if (state.type === "error") return <EditMessage monitorId={monitorId} retry={() => { setState({ type: "loading", monitorId }); setRequestVersion((value) => value + 1) }} />
+  if (state.type === "not_found") return <EditMessage monitorId={monitorId} returnHref={returnHref} />
+  if (state.type === "error") return <EditMessage monitorId={monitorId} returnHref={returnHref} retry={() => { setState({ type: "loading", monitorId }); setRequestVersion((value) => value + 1) }} />
 
   return (
     <main className="mx-auto flex w-full max-w-4xl flex-col gap-5 px-4 py-8 sm:px-6 lg:px-8">
-      <Link className={buttonVariants({ variant: "outline" })} href={`/monitors/${monitorId}`}>
+      <Link className={buttonVariants({ variant: "outline", size: "sm", className: "w-fit" })} href={detailsHref}>
         <ArrowLeftIcon data-icon="inline-start" />
         Back to monitor
       </Link>
@@ -84,7 +94,7 @@ export function MonitorEdit({ monitorId }: { monitorId: string }) {
         <h1 className="text-[2.25rem] font-semibold tracking-[-0.045em] sm:text-[2.6rem]">Edit monitor</h1>
         <p className="mt-1 text-muted-foreground">Update the endpoint and its expected response behavior.</p>
       </header>
-      <MonitorForm monitor={state.monitor} />
+      <MonitorForm monitor={state.monitor} successHref={detailsHref} />
     </main>
   )
 }

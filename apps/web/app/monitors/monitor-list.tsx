@@ -1,6 +1,7 @@
 "use client"
 
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import {
   ChevronLeftIcon,
   ChevronRightIcon,
@@ -8,7 +9,7 @@ import {
   PencilIcon,
   PlusIcon,
 } from "lucide-react"
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 
 import { EmptyState, ErrorState, LoadingState } from "@/components/states"
 import { StatusBadge } from "@/components/status-badge"
@@ -25,6 +26,7 @@ import {
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { cn } from "@/lib/utils"
 import { listMonitors, type MonitorDto, type MonitorListDto } from "@/lib/monitor-api"
+import { monitorDetailsHref, monitorEditHref, monitorListHref } from "@/lib/monitor-navigation"
 import { MonitorDeleteButton } from "./monitor-delete-button"
 import { MonitorStateButton, type MonitorMutationAction } from "./monitor-pause-button"
 
@@ -62,10 +64,14 @@ function statusCode(monitor: MonitorDto): string {
 
 function MonitorActions({
   monitor,
+  returnHref,
+  onNavigate,
   onMonitorChange,
   onMonitorDelete,
 }: {
   monitor: MonitorDto
+  returnHref: string
+  onNavigate: () => void
   onMonitorChange: (monitor: MonitorDto) => void
   onMonitorDelete: (monitorId: string) => void
 }) {
@@ -95,7 +101,11 @@ function MonitorActions({
           <DialogDescription>Edit configuration or pause future checks.</DialogDescription>
         </DialogHeader>
         <div className="grid gap-2">
-          <Link className={cn(buttonVariants({ variant: "outline", size: "lg" }), "justify-start")} href={`/monitors/${monitor.id}/edit`}>
+          <Link
+            className={cn(buttonVariants({ variant: "outline", size: "lg" }), "justify-start")}
+            href={monitorEditHref(monitor.id, returnHref)}
+            onClick={onNavigate}
+          >
             <PencilIcon data-icon="inline-start" />Edit monitor
           </Link>
           <MonitorStateButton
@@ -105,24 +115,49 @@ function MonitorActions({
             onPendingActionChange={setPendingMutation}
             onChanged={(updated) => { onMonitorChange(updated); setOpen(false) }}
           />
-          <MonitorDeleteButton
-            className="justify-start"
-            monitor={monitor}
-            pendingAction={pendingMutation}
-            onPendingActionChange={setPendingMutation}
-            onDeleted={(monitorId) => { onMonitorDelete(monitorId); setOpen(false) }}
-          />
+          <div className="mt-1 border-t border-destructive/20 pt-3">
+            <MonitorDeleteButton
+              className="w-full justify-start"
+              monitor={monitor}
+              pendingAction={pendingMutation}
+              onPendingActionChange={setPendingMutation}
+              onDeleted={(monitorId) => { onMonitorDelete(monitorId); setOpen(false) }}
+            />
+          </div>
         </div>
       </DialogContent>
     </Dialog>
   )
 }
 
-export function MonitorList() {
-  const [pageSize, setPageSize] = useState(10)
-  const [page, setPage] = useState(1)
+export function MonitorList({
+  initialPage = 1,
+  initialPageSize = 10,
+}: {
+  initialPage?: number
+  initialPageSize?: number
+}) {
+  const router = useRouter()
+  const [pagination, setPagination] = useState({
+    page: initialPage,
+    pageSize: initialPageSize,
+    sourcePage: initialPage,
+    sourcePageSize: initialPageSize,
+  })
   const [requestVersion, setRequestVersion] = useState(0)
   const [state, setState] = useState<ListState>({ type: "loading" })
+  const restoredPositionKey = useRef<string | null>(null)
+  const { page, pageSize } = pagination
+
+  if (pagination.sourcePage !== initialPage || pagination.sourcePageSize !== initialPageSize) {
+    setState({ type: "loading" })
+    setPagination({
+      page: initialPage,
+      pageSize: initialPageSize,
+      sourcePage: initialPage,
+      sourcePageSize: initialPageSize,
+    })
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -131,7 +166,8 @@ export function MonitorList() {
       if (outcome.type === "success") {
         if (page > outcome.data.pages) {
           setState({ type: "loading" })
-          setPage(outcome.data.pages)
+          setPagination((current) => ({ ...current, page: outcome.data.pages }))
+          router.replace(monitorListHref(outcome.data.pages, pageSize), { scroll: false })
           return
         }
         setState({ type: "ready", data: outcome.data })
@@ -140,18 +176,48 @@ export function MonitorList() {
       setState({ type: "error" })
     })
     return () => { cancelled = true }
-  }, [page, pageSize, requestVersion])
+  }, [page, pageSize, requestVersion, router])
 
   const data = state.type === "ready" ? state.data : null
   const firstVisible = data && data.total > 0 ? (data.page - 1) * data.page_size + 1 : 0
   const lastVisible = data ? Math.min(data.page * data.page_size, data.total) : 0
+  const returnHref = monitorListHref(page, pageSize)
+
+  useEffect(() => {
+    if (!data || restoredPositionKey.current === returnHref) return
+    restoredPositionKey.current = returnHref
+    try {
+      const storageKey = `monitor-list-scroll:${returnHref}`
+      const storedPosition = window.sessionStorage.getItem(storageKey)
+      if (storedPosition === null) return
+      window.sessionStorage.removeItem(storageKey)
+      window.requestAnimationFrame(() => window.scrollTo({ top: Number(storedPosition), behavior: "instant" }))
+    } catch {
+      // Scroll restoration is a progressive enhancement.
+    }
+  }, [data, returnHref])
+
+  const rememberListPosition = () => {
+    try {
+      window.sessionStorage.setItem(`monitor-list-scroll:${returnHref}`, String(window.scrollY))
+    } catch {
+      // Navigation remains functional when session storage is unavailable.
+    }
+  }
+
+  const navigateToPage = (nextPage: number, nextPageSize = pageSize) => {
+    setState({ type: "loading" })
+    setPagination((current) => ({ ...current, page: nextPage, pageSize: nextPageSize }))
+    router.push(monitorListHref(nextPage, nextPageSize), { scroll: false })
+  }
   const replaceMonitor = (updated: MonitorDto) => setState((current) => current.type === "ready"
     ? { type: "ready", data: { ...current.data, items: current.data.items.map((monitor) => monitor.id === updated.id ? updated : monitor) } }
     : current)
   const removeMonitor = (monitorId: string) => {
     if (data?.items.length === 1 && data.page > 1) {
       setState({ type: "loading" })
-      setPage(data.page - 1)
+      setPagination((current) => ({ ...current, page: data.page - 1 }))
+      router.replace(monitorListHref(data.page - 1, pageSize), { scroll: false })
       return
     }
     setState((current) => {
@@ -223,14 +289,14 @@ export function MonitorList() {
                     return (
                       <TableRow key={monitor.id} className="h-[6rem]">
                         <TableCell className="px-2 py-4">
-                          <Link className="text-base font-medium text-foreground transition-colors hover:text-link" href={`/monitors/${monitor.id}`}>{monitor.name}</Link>
+                          <Link className="text-base font-medium text-foreground transition-colors hover:text-link" href={monitorDetailsHref(monitor.id, returnHref)} onClick={rememberListPosition}>{monitor.name}</Link>
                           <div className="mt-1 max-w-sm truncate text-sm text-muted-foreground" title={monitor.url}>{monitor.url}</div>
                         </TableCell>
                         <TableCell className="px-2 py-4"><StatusBadge status={monitor.status} /></TableCell>
                         <TableCell className="px-2 py-4"><div className="text-sm font-medium text-foreground">{check.label}</div><div className="mt-1 text-sm text-muted-foreground">{check.time}</div></TableCell>
                         <TableCell className="px-2 py-4 text-sm font-medium">{responseTime(monitor)}</TableCell>
                         <TableCell className="px-2 py-4 text-sm font-medium">{statusCode(monitor)}</TableCell>
-                        <TableCell className="px-2 py-4 text-right"><MonitorActions monitor={monitor} onMonitorChange={replaceMonitor} onMonitorDelete={removeMonitor} /></TableCell>
+                        <TableCell className="px-2 py-4 text-right"><MonitorActions monitor={monitor} returnHref={returnHref} onNavigate={rememberListPosition} onMonitorChange={replaceMonitor} onMonitorDelete={removeMonitor} /></TableCell>
                       </TableRow>
                     )
                   })}
@@ -238,12 +304,12 @@ export function MonitorList() {
               </Table>
             </div>
 
-            <div className="divide-y divide-border md:hidden" aria-label="All monitors">
+            <div className="divide-y divide-border px-6 md:hidden" aria-label="All monitors">
               {data.items.map((monitor) => (
                 <article className="flex flex-col gap-4 py-5" key={monitor.id}>
-                  <div className="flex items-start justify-between gap-3"><div className="min-w-0"><Link className="font-semibold hover:text-link" href={`/monitors/${monitor.id}`}>{monitor.name}</Link><p className="mt-1 break-all text-xs text-muted-foreground">{monitor.url}</p></div><StatusBadge status={monitor.status} /></div>
-                  <dl className="grid grid-cols-3 gap-4"><div><dt className="text-xs text-muted-foreground">Latest check</dt><dd className="mt-1 text-sm font-medium">{latestCheck(monitor).label}</dd></div><div><dt className="text-xs text-muted-foreground">Response time</dt><dd className="mt-1 text-sm font-medium">{responseTime(monitor)}</dd></div><div><dt className="text-xs text-muted-foreground">Status code</dt><dd className="mt-1 text-sm font-medium">{statusCode(monitor)}</dd></div></dl>
-                  <div className="flex justify-end"><MonitorActions monitor={monitor} onMonitorChange={replaceMonitor} onMonitorDelete={removeMonitor} /></div>
+                  <div className="flex items-start justify-between gap-3"><div className="min-w-0"><Link className="font-semibold hover:text-link" href={monitorDetailsHref(monitor.id, returnHref)} onClick={rememberListPosition}>{monitor.name}</Link><p className="mt-1 break-all text-xs text-muted-foreground">{monitor.url}</p></div><StatusBadge status={monitor.status} /></div>
+                  <dl className="grid grid-cols-2 gap-4 sm:grid-cols-3"><div><dt className="text-xs text-muted-foreground">Latest check</dt><dd className="mt-1 text-sm font-medium">{latestCheck(monitor).label}</dd></div><div><dt className="text-xs text-muted-foreground">Response time</dt><dd className="mt-1 text-sm font-medium">{responseTime(monitor)}</dd></div><div><dt className="text-xs text-muted-foreground">Status code</dt><dd className="mt-1 text-sm font-medium">{statusCode(monitor)}</dd></div></dl>
+                  <div className="flex justify-end"><MonitorActions monitor={monitor} returnHref={returnHref} onNavigate={rememberListPosition} onMonitorChange={replaceMonitor} onMonitorDelete={removeMonitor} /></div>
                 </article>
               ))}
             </div>
@@ -252,12 +318,12 @@ export function MonitorList() {
             <p className="text-sm text-muted-foreground">Showing {firstVisible} to {lastVisible} of {data.total} monitors</p>
             <div className="flex flex-wrap items-center gap-5">
               <div className="flex items-center gap-2">
-                <Button variant="outline" size="icon-lg" type="button" disabled={data.page === 1} onClick={() => { setState({ type: "loading" }); setPage((value) => Math.max(1, value - 1)) }} aria-label="Previous page"><ChevronLeftIcon /></Button>
+                <Button variant="outline" size="icon-lg" type="button" disabled={data.page === 1} onClick={() => navigateToPage(Math.max(1, data.page - 1))} aria-label="Previous page"><ChevronLeftIcon /></Button>
                 <Button className="border-primary/50 bg-primary/10 text-primary hover:bg-primary/15" variant="outline" size="icon-lg" type="button" aria-current="page">{data.page}</Button>
-                <Button variant="outline" size="icon-lg" type="button" disabled={data.page === data.pages} onClick={() => { setState({ type: "loading" }); setPage((value) => Math.min(data.pages, value + 1)) }} aria-label="Next page"><ChevronRightIcon /></Button>
+                <Button variant="outline" size="icon-lg" type="button" disabled={data.page === data.pages} onClick={() => navigateToPage(Math.min(data.pages, data.page + 1))} aria-label="Next page"><ChevronRightIcon /></Button>
               </div>
               <label className="sr-only" htmlFor="monitor-page-size">Rows per page</label>
-              <select id="monitor-page-size" value={pageSize} onChange={(event) => { setState({ type: "loading" }); setPageSize(Number(event.target.value)); setPage(1) }} className="h-11 rounded-lg border border-input bg-card px-4 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50">
+              <select id="monitor-page-size" value={pageSize} onChange={(event) => navigateToPage(1, Number(event.target.value))} className="h-11 rounded-lg border border-input bg-card px-4 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50">
                 <option value="5">5 / page</option><option value="10">10 / page</option><option value="25">25 / page</option>
               </select>
             </div>

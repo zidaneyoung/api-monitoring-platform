@@ -6,6 +6,11 @@ import type { MonitorDto, MonitorListDto } from "@/lib/monitor-api"
 
 
 const fetchMock = vi.fn()
+const navigationMock = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }))
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => navigationMock,
+}))
 
 const unknownMonitor: MonitorDto = {
   id: "monitor-unknown",
@@ -49,6 +54,8 @@ function responsePage(overrides: Partial<MonitorListDto> = {}): Response {
 beforeEach(() => {
   vi.stubGlobal("fetch", fetchMock)
   fetchMock.mockReset()
+  navigationMock.push.mockReset()
+  navigationMock.replace.mockReset()
 })
 
 afterEach(() => {
@@ -71,7 +78,7 @@ describe("MonitorList", () => {
     expect(screen.getAllByText("Not checked yet").length).toBeGreaterThan(0)
     expect(screen.queryByText("Checkout")).toBeNull()
     fireEvent.click(screen.getAllByRole("button", { name: "Actions for Owner unknown API" })[0])
-    expect((await screen.findByRole("link", { name: "Edit monitor" })).getAttribute("href")).toBe("/monitors/monitor-unknown/edit")
+    expect((await screen.findByRole("link", { name: "Edit monitor" })).getAttribute("href")).toBe("/monitors/monitor-unknown/edit?return_to=%2Fmonitors%3Fpage%3D1%26page_size%3D10")
   })
 
   it("renders the backend empty state", async () => {
@@ -100,7 +107,17 @@ describe("MonitorList", () => {
     expect((await screen.findAllByText("Owner unknown API")).length).toBeGreaterThan(0)
     fireEvent.click(screen.getByRole("button", { name: "Next page" }))
     expect((await screen.findAllByText("Owner paused API")).length).toBeGreaterThan(0)
+    expect(navigationMock.push).toHaveBeenCalledWith("/monitors?page=2&page_size=10", { scroll: false })
     expect(fetchMock.mock.calls[1]?.[0]).toBe("http://localhost:8000/monitors?page=2&page_size=10")
+  })
+
+  it("loads pagination from the URL-backed page inputs and preserves it in detail links", async () => {
+    fetchMock.mockResolvedValue(responsePage({ items: [pausedMonitor], page: 2, page_size: 25, total: 30, pages: 2 }))
+    render(<MonitorList initialPage={2} initialPageSize={25} />)
+
+    const details = (await screen.findAllByRole("link", { name: "Owner paused API" }))[0]
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("http://localhost:8000/monitors?page=2&page_size=25")
+    expect(details.getAttribute("href")).toBe("/monitors/monitor-paused?return_to=%2Fmonitors%3Fpage%3D2%26page_size%3D25")
   })
 
   it("confirms deletion and removes the monitor from the active list", async () => {
@@ -116,5 +133,22 @@ describe("MonitorList", () => {
     expect(await screen.findByText("No monitors yet")).toBeTruthy()
     expect(screen.queryByText("Owner unknown API")).toBeNull()
     expect(fetchMock.mock.calls[1]?.[0]).toBe("http://localhost:8000/monitors/monitor-unknown")
+  })
+
+  it("returns to the previous URL page after deleting its final row", async () => {
+    fetchMock
+      .mockResolvedValueOnce(responsePage({ items: [pausedMonitor], page: 2, page_size: 5, total: 6, pages: 2 }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(responsePage({ items: [unknownMonitor], page: 1, page_size: 5, total: 5, pages: 1 }))
+    render(<MonitorList initialPage={2} initialPageSize={5} />)
+
+    expect((await screen.findAllByText("Owner paused API")).length).toBeGreaterThan(0)
+    fireEvent.click(screen.getAllByRole("button", { name: "Actions for Owner paused API" })[0])
+    fireEvent.click(await screen.findByRole("button", { name: "Delete monitor" }))
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Permanently delete Owner paused API?" })).getByRole("button", { name: "Delete permanently" }))
+
+    expect((await screen.findAllByText("Owner unknown API")).length).toBeGreaterThan(0)
+    expect(navigationMock.replace).toHaveBeenCalledWith("/monitors?page=1&page_size=5", { scroll: false })
+    expect(fetchMock.mock.calls[2]?.[0]).toBe("http://localhost:8000/monitors?page=1&page_size=5")
   })
 })

@@ -2,10 +2,19 @@
 
 import { Loader2Icon } from "lucide-react"
 import { useRouter } from "next/navigation"
-import { useEffect, useRef, useState, type FormEvent, type MouseEvent } from "react"
+import { useEffect, useRef, useState, type FormEvent, type MouseEvent as ReactMouseEvent } from "react"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import {
   Field,
   FieldDescription,
@@ -49,6 +58,38 @@ function numberValue(formData: FormData, field: MonitorField): number {
   return Number(formData.get(field))
 }
 
+function payloadFromFormData(formData: FormData): MonitorCreatePayload {
+  return {
+    name: String(formData.get("name") ?? ""),
+    url: String(formData.get("url") ?? ""),
+    http_method: formData.get("http_method") === "HEAD" ? "HEAD" : "GET",
+    interval_seconds: numberValue(formData, "interval_seconds"),
+    timeout_seconds: numberValue(formData, "timeout_seconds"),
+    expected_status_min: numberValue(formData, "expected_status_min"),
+    expected_status_max: numberValue(formData, "expected_status_max"),
+    failure_threshold: numberValue(formData, "failure_threshold"),
+    recovery_threshold: numberValue(formData, "recovery_threshold"),
+  }
+}
+
+function payloadFromMonitor(monitor: MonitorDto): MonitorCreatePayload {
+  return {
+    name: monitor.name,
+    url: monitor.url,
+    http_method: monitor.http_method,
+    interval_seconds: monitor.interval_seconds,
+    timeout_seconds: monitor.timeout_seconds,
+    expected_status_min: monitor.expected_status_min,
+    expected_status_max: monitor.expected_status_max,
+    failure_threshold: monitor.failure_threshold,
+    recovery_threshold: monitor.recovery_threshold,
+  }
+}
+
+function payloadFingerprint(payload: MonitorCreatePayload): string {
+  return JSON.stringify(payload)
+}
+
 function errorId(field: MonitorInputField): string {
   return `${FIELD_DETAILS[field].id}-error`
 }
@@ -63,17 +104,56 @@ function describedBy(
     : descriptionId
 }
 
-export function MonitorForm({ monitor }: { monitor?: MonitorDto }) {
+export function MonitorForm({ monitor, successHref }: { monitor?: MonitorDto; successHref?: string }) {
   const router = useRouter()
   const [errors, setErrors] = useState<MonitorFormErrors>(emptyMonitorFormErrors)
   const [errorVersion, setErrorVersion] = useState(0)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const errorSummaryRef = useRef<HTMLDivElement>(null)
+  const dirtyRef = useRef(false)
+  const blockedTriggerRef = useRef<HTMLElement | null>(null)
+  const [pendingHref, setPendingHref] = useState<string | null>(null)
   const isEditing = monitor !== undefined
+  const initialFingerprint = monitor ? payloadFingerprint(payloadFromMonitor(monitor)) : null
 
   useEffect(() => {
     if (errorVersion > 0) errorSummaryRef.current?.focus()
   }, [errorVersion])
+
+  useEffect(() => {
+    dirtyRef.current = false
+  }, [monitor?.id])
+
+  useEffect(() => {
+    if (!isEditing) return
+
+    const warnBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (!dirtyRef.current) return
+      event.preventDefault()
+      event.returnValue = ""
+    }
+    const guardInternalLink = (event: globalThis.MouseEvent) => {
+      if (!dirtyRef.current || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+      const target = event.target instanceof Element ? event.target.closest("a[href]") : null
+      if (!(target instanceof HTMLAnchorElement) || target.target === "_blank" || target.hasAttribute("download")) return
+
+      const destination = new URL(target.href, window.location.href)
+      if (destination.origin !== window.location.origin) return
+      if (destination.pathname === window.location.pathname && destination.search === window.location.search) return
+      const nextHref = `${destination.pathname}${destination.search}${destination.hash}`
+
+      event.preventDefault()
+      blockedTriggerRef.current = target
+      setPendingHref(nextHref)
+    }
+
+    window.addEventListener("beforeunload", warnBeforeUnload)
+    document.addEventListener("click", guardInternalLink, true)
+    return () => {
+      window.removeEventListener("beforeunload", warnBeforeUnload)
+      document.removeEventListener("click", guardInternalLink, true)
+    }
+  }, [isEditing])
 
   const errorsFor = (field: MonitorInputField) => (
     errors.fieldErrors.filter((error) => error.field === field)
@@ -85,7 +165,7 @@ export function MonitorForm({ monitor }: { monitor?: MonitorDto }) {
     setErrorVersion((version) => version + 1)
   }
 
-  function focusField(event: MouseEvent<HTMLAnchorElement>, field: MonitorInputField) {
+  function focusField(event: ReactMouseEvent<HTMLAnchorElement>, field: MonitorInputField) {
     event.preventDefault()
     document.getElementById(FIELD_DETAILS[field].id)?.focus()
   }
@@ -94,18 +174,7 @@ export function MonitorForm({ monitor }: { monitor?: MonitorDto }) {
     event.preventDefault()
     if (isSubmitting) return
 
-    const formData = new FormData(event.currentTarget)
-    const payload: MonitorCreatePayload = {
-      name: String(formData.get("name") ?? ""),
-      url: String(formData.get("url") ?? ""),
-      http_method: formData.get("http_method") === "HEAD" ? "HEAD" : "GET",
-      interval_seconds: numberValue(formData, "interval_seconds"),
-      timeout_seconds: numberValue(formData, "timeout_seconds"),
-      expected_status_min: numberValue(formData, "expected_status_min"),
-      expected_status_max: numberValue(formData, "expected_status_max"),
-      failure_threshold: numberValue(formData, "failure_threshold"),
-      recovery_threshold: numberValue(formData, "recovery_threshold"),
-    }
+    const payload = payloadFromFormData(new FormData(event.currentTarget))
 
     const clientErrors = validateMonitorPayload(payload)
     if (clientErrors) {
@@ -121,20 +190,39 @@ export function MonitorForm({ monitor }: { monitor?: MonitorDto }) {
     setIsSubmitting(false)
 
     if (outcome.type === "success") {
-      router.push(monitor ? `/monitors/${monitor.id}` : "/monitors")
+      dirtyRef.current = false
+      router.push(successHref ?? (monitor ? `/monitors/${monitor.id}` : "/monitors"))
       router.refresh()
       return
     }
     showErrors(adaptMonitorFormFailure(outcome, isEditing ? "edit" : "create"))
   }
 
+  function trackDirtyForm(event: FormEvent<HTMLFormElement>) {
+    if (!initialFingerprint) return
+    dirtyRef.current = payloadFingerprint(payloadFromFormData(new FormData(event.currentTarget))) !== initialFingerprint
+  }
+
+  function cancelNavigationWarning() {
+    setPendingHref(null)
+    window.requestAnimationFrame(() => blockedTriggerRef.current?.focus())
+  }
+
+  function discardChangesAndNavigate() {
+    const destination = pendingHref
+    dirtyRef.current = false
+    setPendingHref(null)
+    if (destination) router.push(destination)
+  }
+
   return (
+    <>
     <Card>
       <CardHeader>
         <CardTitle>Monitor configuration</CardTitle>
         <CardDescription>Configure the endpoint, schedule, and response rules used by this monitor.</CardDescription>
       </CardHeader>
-      <form onSubmit={submitMonitor} noValidate>
+      <form onSubmit={submitMonitor} onChange={trackDirtyForm} noValidate>
         <CardContent>
           <FieldGroup>
             {hasErrors ? (
@@ -354,5 +442,18 @@ export function MonitorForm({ monitor }: { monitor?: MonitorDto }) {
         </CardFooter>
       </form>
     </Card>
+    <Dialog open={pendingHref !== null} onOpenChange={(open) => { if (!open) cancelNavigationWarning() }}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Discard unsaved changes?</DialogTitle>
+          <DialogDescription>Your monitor edits have not been saved. Leaving now will discard them.</DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <DialogClose render={<Button variant="outline" type="button" />}>Keep editing</DialogClose>
+          <Button variant="destructive" type="button" onClick={discardChangesAndNavigate}>Discard changes</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+    </>
   )
 }

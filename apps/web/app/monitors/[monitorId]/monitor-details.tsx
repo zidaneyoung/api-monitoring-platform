@@ -2,13 +2,14 @@
 
 import Link from "next/link"
 import { useRouter } from "next/navigation"
-import { ArrowLeftIcon, PencilIcon } from "lucide-react"
+import { ArrowLeftIcon, ClipboardIcon, ExternalLinkIcon, PencilIcon } from "lucide-react"
 import { useEffect, useState } from "react"
 
 import { StatusBadge } from "@/components/status-badge"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { getMonitor, type MonitorDto } from "@/lib/monitor-api"
+import { monitorEditHref, monitorListHref } from "@/lib/monitor-navigation"
 import { MonitorDeleteButton } from "../monitor-delete-button"
 import { MonitorStateButton, type MonitorMutationAction } from "../monitor-pause-button"
 
@@ -19,36 +20,75 @@ type DetailsState =
   | { type: "error"; monitorId: string }
   | { type: "ready"; monitorId: string; monitor: MonitorDto }
 
-const dateFormatter = new Intl.DateTimeFormat("en-US", {
-  dateStyle: "medium",
-  timeStyle: "short",
-})
-
-function formatDate(value: string | null): string {
-  return value ? dateFormatter.format(new Date(value)) : "—"
-}
-
 function formatDuration(seconds: number): string {
   if (seconds % 3600 === 0) return `${seconds / 3600} hour${seconds === 3600 ? "" : "s"}`
   if (seconds % 60 === 0) return `${seconds / 60} minute${seconds === 60 ? "" : "s"}`
   return `${seconds} seconds`
 }
 
-function SummaryCard({ label, value }: { label: string; value: string }) {
+function ConfigurationRows({ rows }: { rows: Array<[string, string]> }) {
   return (
-    <Card className="gap-1 py-4">
-      <CardHeader className="px-4"><CardDescription>{label}</CardDescription><CardTitle className="text-xl">{value}</CardTitle></CardHeader>
-    </Card>
+    <dl>
+      {rows.map(([label, value]) => (
+        <div className="flex items-start justify-between gap-4 border-b py-3 first:pt-0 last:border-b-0 last:pb-0" key={label}>
+          <dt className="text-sm text-muted-foreground">{label}</dt>
+          <dd className="text-right text-sm font-semibold">{value}</dd>
+        </div>
+      ))}
+    </dl>
+  )
+}
+
+function EndpointUtilities({ url }: { url: string }) {
+  const [feedback, setFeedback] = useState<{ type: "success" | "error"; message: string } | null>(null)
+
+  async function copyEndpoint() {
+    let timeout: ReturnType<typeof setTimeout> | undefined
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error("Clipboard unavailable")
+      await Promise.race([
+        navigator.clipboard.writeText(url),
+        new Promise<never>((_, reject) => {
+          timeout = setTimeout(() => reject(new Error("Clipboard timed out")), 2000)
+        }),
+      ])
+      setFeedback({ type: "success", message: "Endpoint URL copied." })
+    } catch {
+      setFeedback({ type: "error", message: "Endpoint URL could not be copied. Select and copy it manually." })
+    } finally {
+      if (timeout) clearTimeout(timeout)
+    }
+  }
+
+  return (
+    <div className="grid gap-3">
+      <a className="break-all text-sm font-semibold text-link hover:underline" href={url} target="_blank" rel="noopener noreferrer">
+        {url}
+      </a>
+      <div className="flex flex-wrap gap-2">
+        <Button variant="outline" size="sm" type="button" onClick={copyEndpoint}>
+          <ClipboardIcon data-icon="inline-start" />Copy endpoint
+        </Button>
+        <a className={buttonVariants({ variant: "outline", size: "sm" })} href={url} target="_blank" rel="noopener noreferrer">
+          <ExternalLinkIcon data-icon="inline-start" />Open endpoint
+        </a>
+      </div>
+      {feedback ? (
+        <p className={feedback.type === "error" ? "text-sm text-destructive" : "text-sm text-muted-foreground"} role={feedback.type === "error" ? "alert" : "status"} aria-live="polite">
+          {feedback.message}
+        </p>
+      ) : null}
+    </div>
   )
 }
 
 function LoadingDetails() {
   return (
-    <main className="mx-auto flex w-full max-w-[94rem] flex-col gap-5 px-4 py-6 sm:px-6 lg:px-8" aria-busy="true">
+    <main className="mx-auto flex w-full max-w-6xl flex-col gap-5 px-4 py-6 sm:px-6 lg:px-8" aria-busy="true">
       <span className="sr-only">Loading monitor details</span>
       <div className="h-8 w-40 animate-pulse rounded-md bg-muted" />
       <div className="h-14 w-96 max-w-full animate-pulse rounded-md bg-muted" />
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">{Array.from({ length: 5 }, (_, index) => <div className="h-24 animate-pulse rounded-xl bg-muted" key={index} />)}</div>
+      <div className="grid gap-4 md:grid-cols-2">{Array.from({ length: 4 }, (_, index) => <div className="h-44 animate-pulse rounded-xl bg-muted" key={index} />)}</div>
     </main>
   )
 }
@@ -56,10 +96,12 @@ function LoadingDetails() {
 function MessageDetails({
   title,
   description,
+  returnHref,
   retry,
 }: {
   title: string
   description: string
+  returnHref: string
   retry?: () => void
 }) {
   return (
@@ -70,7 +112,7 @@ function MessageDetails({
           <p className="text-muted-foreground">{description}</p>
           <div className="flex flex-wrap justify-center gap-2">
             {retry ? <Button variant="outline" type="button" onClick={retry}>Try again</Button> : null}
-            <Link className={buttonVariants({ variant: "outline" })} href="/monitors"><ArrowLeftIcon data-icon="inline-start" />Back to monitors</Link>
+            <Link className={buttonVariants({ variant: "outline" })} href={returnHref}><ArrowLeftIcon data-icon="inline-start" />Back to monitors</Link>
           </div>
         </CardContent>
       </Card>
@@ -80,65 +122,106 @@ function MessageDetails({
 
 function DetailsContent({
   monitor,
+  returnHref,
   onMonitorChange,
   onDeleted,
 }: {
   monitor: MonitorDto
+  returnHref: string
   onMonitorChange: (monitor: MonitorDto) => void
   onDeleted: (monitorId: string) => void
 }) {
   const [pendingMutation, setPendingMutation] = useState<MonitorMutationAction | null>(null)
-  const configuration = [
-    ["HTTP method", monitor.http_method],
-    ["Interval", formatDuration(monitor.interval_seconds)],
-    ["Timeout", formatDuration(monitor.timeout_seconds)],
-    ["Accepted status", `${monitor.expected_status_min}–${monitor.expected_status_max}`],
-    ["Failure threshold", String(monitor.failure_threshold)],
-    ["Recovery threshold", String(monitor.recovery_threshold)],
-  ]
+  const stateDescription = monitor.status === "paused"
+    ? "Checks are paused until this monitor is resumed."
+    : monitor.status === "unknown"
+      ? "No completed check has established this monitor’s health yet."
+      : "This is the latest state stored for the monitor."
+
   return (
-    <main className="mx-auto flex w-full max-w-[94rem] flex-col gap-4 px-4 py-6 sm:px-6 lg:px-8 xl:px-11 xl:py-7">
-      <Link className="inline-flex w-fit items-center gap-2 text-sm font-medium text-foreground transition-colors hover:text-link focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50" href="/monitors"><ArrowLeftIcon aria-hidden="true" />Back to monitors</Link>
-      <header className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
-        <div className="min-w-0"><div className="flex flex-wrap items-center gap-4"><h1 className="text-[2.25rem] font-semibold tracking-[-0.045em] sm:text-[2.45rem]">{monitor.name}</h1><StatusBadge status={monitor.status} className="px-3 py-1 text-base" /></div><a className="mt-1 block break-all text-base font-semibold text-link hover:underline" href={monitor.url}>{monitor.url}</a></div>
-        <div className="flex flex-wrap items-center gap-3">
-          <Link className={buttonVariants({ variant: "outline", size: "lg", className: "h-10 px-4" })} href={`/monitors/${monitor.id}/edit`}><PencilIcon data-icon="inline-start" />Edit</Link>
-          <MonitorStateButton
-            className="h-10 px-4"
-            monitor={monitor}
-            pendingAction={pendingMutation}
-            onPendingActionChange={setPendingMutation}
-            onChanged={onMonitorChange}
-          />
-          <MonitorDeleteButton
-            className="h-10 px-4"
-            monitor={monitor}
-            pendingAction={pendingMutation}
-            onPendingActionChange={setPendingMutation}
-            onDeleted={onDeleted}
-          />
-        </div>
+    <main className="mx-auto flex w-full max-w-6xl flex-col gap-5 px-4 py-6 sm:px-6 lg:px-8 xl:py-8">
+      <Link className={buttonVariants({ variant: "ghost", size: "sm", className: "w-fit px-2" })} href={returnHref}>
+        <ArrowLeftIcon data-icon="inline-start" />Back to monitors
+      </Link>
+
+      <header>
+        <h1 className="break-words text-[2.25rem] font-semibold tracking-[-0.045em] sm:text-[2.6rem]">{monitor.name}</h1>
+        <p className="mt-1 text-muted-foreground">Monitor configuration and available management actions.</p>
       </header>
 
-      <dl className="mt-1 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-        <SummaryCard label="Current status" value={monitor.status[0].toUpperCase() + monitor.status.slice(1)} />
-        <SummaryCard label="Latest response time" value={monitor.latest_response_time_ms === null ? "—" : `${monitor.latest_response_time_ms.toLocaleString()} ms`} />
-        <SummaryCard label="Status code" value={monitor.latest_status_code === null ? "—" : String(monitor.latest_status_code)} />
-        <SummaryCard label="Latest check" value={formatDate(monitor.last_checked_at)} />
-        <SummaryCard label="Next check" value={formatDate(monitor.next_check_at)} />
-      </dl>
+      <section aria-labelledby="monitor-current-state">
+        <Card>
+          <CardHeader>
+            <CardTitle id="monitor-current-state">Current state</CardTitle>
+            <CardDescription>{stateDescription}</CardDescription>
+          </CardHeader>
+          <CardContent><StatusBadge status={monitor.status} className="px-3 py-1 text-base" /></CardContent>
+        </Card>
+      </section>
 
-      <div className="mt-1 grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1.7fr)_minmax(20rem,1fr)]">
-        <Card><CardHeader><CardTitle>Response time</CardTitle><CardDescription>Response history will appear after check-history endpoints are implemented.</CardDescription></CardHeader><CardContent><p className="text-sm text-muted-foreground">No response history is included in this monitor-details response.</p></CardContent></Card>
-        <Card><CardHeader><CardTitle>Configuration</CardTitle><CardDescription>Monitor request and alert thresholds.</CardDescription></CardHeader><CardContent><dl>{configuration.map(([label, value]) => <div className="flex items-center justify-between gap-4 border-b py-2.5 last:border-b-0" key={label}><dt className="text-sm text-muted-foreground">{label}</dt><dd className="text-right text-sm font-semibold">{value}</dd></div>)}</dl></CardContent></Card>
-        <Card><CardHeader><CardTitle>Recent checks</CardTitle><CardDescription>Check history is outside this workflow unit.</CardDescription></CardHeader><CardContent><p className="text-sm text-muted-foreground">No check history loaded.</p></CardContent></Card>
-        <Card><CardHeader><CardTitle>Incident history</CardTitle><CardDescription>Incident history is outside this workflow unit.</CardDescription></CardHeader><CardContent><p className="text-sm text-muted-foreground">No incident history loaded.</p></CardContent></Card>
+      <div className="grid min-w-0 gap-4 md:grid-cols-2">
+        <section aria-labelledby="monitor-endpoint-configuration">
+          <Card className="h-full">
+            <CardHeader><CardTitle id="monitor-endpoint-configuration">Endpoint configuration</CardTitle><CardDescription>The request destination and method.</CardDescription></CardHeader>
+            <CardContent className="grid gap-5">
+              <EndpointUtilities url={monitor.url} />
+              <ConfigurationRows rows={[["HTTP method", monitor.http_method]]} />
+            </CardContent>
+          </Card>
+        </section>
+
+        <section aria-labelledby="monitor-schedule-configuration">
+          <Card className="h-full">
+            <CardHeader><CardTitle id="monitor-schedule-configuration">Schedule configuration</CardTitle><CardDescription>How often a future check may run and wait.</CardDescription></CardHeader>
+            <CardContent><ConfigurationRows rows={[["Interval", formatDuration(monitor.interval_seconds)], ["Timeout", formatDuration(monitor.timeout_seconds)]]} /></CardContent>
+          </Card>
+        </section>
+
+        <section aria-labelledby="monitor-success-criteria">
+          <Card className="h-full">
+            <CardHeader><CardTitle id="monitor-success-criteria">Success criteria</CardTitle><CardDescription>Accepted responses and consecutive-result thresholds.</CardDescription></CardHeader>
+            <CardContent><ConfigurationRows rows={[["Accepted status", `${monitor.expected_status_min}–${monitor.expected_status_max}`], ["Failure threshold", String(monitor.failure_threshold)], ["Recovery threshold", String(monitor.recovery_threshold)]]} /></CardContent>
+          </Card>
+        </section>
+
+        <section aria-labelledby="monitor-available-actions">
+          <Card className="h-full">
+            <CardHeader><CardTitle id="monitor-available-actions">Available actions</CardTitle><CardDescription>Update this monitor or change whether future checks may run.</CardDescription></CardHeader>
+            <CardContent className="grid gap-4">
+              <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+                <Link className={buttonVariants({ variant: "outline", size: "lg", className: "justify-start" })} href={monitorEditHref(monitor.id, returnHref)}><PencilIcon data-icon="inline-start" />Edit monitor</Link>
+                <MonitorStateButton
+                  className="w-full justify-start sm:w-auto"
+                  monitor={monitor}
+                  pendingAction={pendingMutation}
+                  onPendingActionChange={setPendingMutation}
+                  onChanged={onMonitorChange}
+                />
+              </div>
+              <div className="border-t border-destructive/20 pt-4">
+                <MonitorDeleteButton
+                  className="w-full justify-start sm:w-auto"
+                  monitor={monitor}
+                  pendingAction={pendingMutation}
+                  onPendingActionChange={setPendingMutation}
+                  onDeleted={onDeleted}
+                />
+              </div>
+            </CardContent>
+          </Card>
+        </section>
       </div>
     </main>
   )
 }
 
-export function MonitorDetails({ monitorId }: { monitorId: string }) {
+export function MonitorDetails({
+  monitorId,
+  returnHref = monitorListHref(),
+}: {
+  monitorId: string
+  returnHref?: string
+}) {
   const router = useRouter()
   const [requestVersion, setRequestVersion] = useState(0)
   const [state, setState] = useState<DetailsState>({ type: "loading", monitorId })
@@ -155,7 +238,7 @@ export function MonitorDetails({ monitorId }: { monitorId: string }) {
   }, [monitorId, requestVersion])
 
   if (state.type === "loading" || state.monitorId !== monitorId) return <LoadingDetails />
-  if (state.type === "not_found") return <MessageDetails title="Monitor not found" description="This monitor does not exist or is not available to your account." />
-  if (state.type === "error") return <MessageDetails title="Unable to display monitor" description="Monitor details could not be loaded. Try again." retry={() => { setState({ type: "loading", monitorId }); setRequestVersion((value) => value + 1) }} />
-  return <DetailsContent monitor={state.monitor} onMonitorChange={(monitor) => setState({ type: "ready", monitorId, monitor })} onDeleted={() => { router.push("/monitors"); router.refresh() }} />
+  if (state.type === "not_found") return <MessageDetails title="Monitor not found" description="This monitor does not exist or is not available to your account." returnHref={returnHref} />
+  if (state.type === "error") return <MessageDetails title="Unable to display monitor" description="Monitor details could not be loaded. Try again." returnHref={returnHref} retry={() => { setState({ type: "loading", monitorId }); setRequestVersion((value) => value + 1) }} />
+  return <DetailsContent monitor={state.monitor} returnHref={returnHref} onMonitorChange={(monitor) => setState({ type: "ready", monitorId, monitor })} onDeleted={() => { router.push(returnHref); router.refresh() }} />
 }
