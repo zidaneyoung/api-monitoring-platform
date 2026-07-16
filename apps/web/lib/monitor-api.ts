@@ -50,6 +50,10 @@ export type MonitorOutcome<T> =
   | { type: "validation"; errors: MonitorError[] }
   | { type: "not_found" }
   | { type: "unauthenticated" }
+  | { type: "forbidden" }
+  | { type: "conflict" }
+  | { type: "rate_limited" }
+  | { type: "internal_error" }
   | { type: "unavailable" }
   | { type: "timeout" }
   | { type: "network_error" }
@@ -145,6 +149,17 @@ function requestFailure(error: unknown): MonitorOutcome<never> {
   return { type: "network_error" }
 }
 
+function responseFailure(status: number): MonitorOutcome<never> {
+  if (status === 401) return { type: "unauthenticated" }
+  if (status === 403) return { type: "forbidden" }
+  if (status === 404) return { type: "not_found" }
+  if (status === 409) return { type: "conflict" }
+  if (status === 429) return { type: "rate_limited" }
+  if (status === 503) return { type: "unavailable" }
+  if (status >= 500) return { type: "internal_error" }
+  return { type: "unexpected_response" }
+}
+
 export async function createMonitor(
   payload: MonitorCreatePayload,
 ): Promise<MonitorOutcome<MonitorDto>> {
@@ -166,9 +181,7 @@ export async function createMonitor(
     if (response.status === 422) {
       return { type: "validation", errors: await readValidationErrors(response) }
     }
-    if (response.status === 401) return { type: "unauthenticated" }
-    if (response.status === 503) return { type: "unavailable" }
-    return { type: "unexpected_response" }
+    return responseFailure(response.status)
   } catch (error) {
     return requestFailure(error)
   }
@@ -196,10 +209,7 @@ export async function updateMonitor(
     if (response.status === 422) {
       return { type: "validation", errors: await readValidationErrors(response) }
     }
-    if (response.status === 404) return { type: "not_found" }
-    if (response.status === 401) return { type: "unauthenticated" }
-    if (response.status === 503) return { type: "unavailable" }
-    return { type: "unexpected_response" }
+    return responseFailure(response.status)
   } catch (error) {
     return requestFailure(error)
   }
@@ -227,9 +237,7 @@ export async function listMonitors(
         ? { type: "success", data: monitors }
         : { type: "unexpected_response" }
     }
-    if (response.status === 401) return { type: "unauthenticated" }
-    if (response.status === 503) return { type: "unavailable" }
-    return { type: "unexpected_response" }
+    return responseFailure(response.status)
   } catch (error) {
     return requestFailure(error)
   }
@@ -252,10 +260,7 @@ export async function getMonitor(
         ? { type: "success", data: monitor }
         : { type: "unexpected_response" }
     }
-    if (response.status === 404) return { type: "not_found" }
-    if (response.status === 401) return { type: "unauthenticated" }
-    if (response.status === 503) return { type: "unavailable" }
-    return { type: "unexpected_response" }
+    return responseFailure(response.status)
   } catch (error) {
     return requestFailure(error)
   }
@@ -277,10 +282,7 @@ export async function pauseMonitor(
         ? { type: "success", data: monitor }
         : { type: "unexpected_response" }
     }
-    if (response.status === 404) return { type: "not_found" }
-    if (response.status === 401) return { type: "unauthenticated" }
-    if (response.status === 503) return { type: "unavailable" }
-    return { type: "unexpected_response" }
+    return responseFailure(response.status)
   } catch (error) {
     return requestFailure(error)
   }
@@ -302,10 +304,7 @@ export async function resumeMonitor(
         ? { type: "success", data: monitor }
         : { type: "unexpected_response" }
     }
-    if (response.status === 404) return { type: "not_found" }
-    if (response.status === 401) return { type: "unauthenticated" }
-    if (response.status === 503) return { type: "unavailable" }
-    return { type: "unexpected_response" }
+    return responseFailure(response.status)
   } catch (error) {
     return requestFailure(error)
   }
@@ -322,10 +321,7 @@ export async function deleteMonitor(
     })
 
     if (response.status === 204) return { type: "success", data: null }
-    if (response.status === 404) return { type: "not_found" }
-    if (response.status === 401) return { type: "unauthenticated" }
-    if (response.status === 503) return { type: "unavailable" }
-    return { type: "unexpected_response" }
+    return responseFailure(response.status)
   } catch (error) {
     return requestFailure(error)
   }
