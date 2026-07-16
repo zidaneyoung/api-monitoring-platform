@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { ArrowLeftIcon } from "lucide-react"
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
@@ -67,17 +67,19 @@ export function MonitorEdit({
 }) {
   const [requestVersion, setRequestVersion] = useState(0)
   const [state, setState] = useState<EditState>({ type: "loading", monitorId })
+  const latestReadRef = useRef(0)
   const detailsHref = monitorDetailsHref(monitorId, returnHref)
 
   useEffect(() => {
-    let cancelled = false
-    void getMonitor(monitorId).then((outcome) => {
-      if (cancelled) return
+    const controller = new AbortController()
+    const readId = ++latestReadRef.current
+    void getMonitor(monitorId, { signal: controller.signal }).then((outcome) => {
+      if (readId !== latestReadRef.current || outcome.type === "cancelled") return
       if (outcome.type === "success") setState({ type: "ready", monitorId, monitor: outcome.data })
       else if (outcome.type === "not_found") setState({ type: "not_found", monitorId })
       else setState({ type: "error", monitorId })
     })
-    return () => { cancelled = true }
+    return () => { controller.abort() }
   }, [monitorId, requestVersion])
 
   if (state.type === "loading" || state.monitorId !== monitorId) return <LoadingEdit />

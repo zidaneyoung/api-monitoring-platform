@@ -3,7 +3,7 @@
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { ArrowLeftIcon, ClipboardIcon, ExternalLinkIcon, PencilIcon } from "lucide-react"
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 
 import { StatusBadge } from "@/components/status-badge"
 import { Button, buttonVariants } from "@/components/ui/button"
@@ -225,16 +225,18 @@ export function MonitorDetails({
   const router = useRouter()
   const [requestVersion, setRequestVersion] = useState(0)
   const [state, setState] = useState<DetailsState>({ type: "loading", monitorId })
+  const latestReadRef = useRef(0)
 
   useEffect(() => {
-    let cancelled = false
-    void getMonitor(monitorId).then((outcome) => {
-      if (cancelled) return
+    const controller = new AbortController()
+    const readId = ++latestReadRef.current
+    void getMonitor(monitorId, { signal: controller.signal }).then((outcome) => {
+      if (readId !== latestReadRef.current || outcome.type === "cancelled") return
       if (outcome.type === "success") setState({ type: "ready", monitorId, monitor: outcome.data })
       else if (outcome.type === "not_found") setState({ type: "not_found", monitorId })
       else setState({ type: "error", monitorId })
     })
-    return () => { cancelled = true }
+    return () => { controller.abort() }
   }, [monitorId, requestVersion])
 
   if (state.type === "loading" || state.monitorId !== monitorId) return <LoadingDetails />

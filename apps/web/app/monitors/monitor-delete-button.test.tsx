@@ -98,4 +98,17 @@ describe("MonitorDeleteButton", () => {
     expect(within(dialog).getByRole("button", { name: "Delete permanently" }).hasAttribute("disabled")).toBe(false)
     expect(screen.getByRole("button", { name: "Delete monitor", hidden: true }).hasAttribute("disabled")).toBe(false)
   })
+
+  it("ignores a delete response after its monitor UI is superseded", async () => {
+    let finishRequest: (response: Response) => void = () => undefined
+    fetchMock.mockReturnValue(new Promise<Response>((resolve) => { finishRequest = resolve }))
+    const { unmount } = render(<MonitorDeleteButton monitor={monitor} onDeleted={onDeleted} />)
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete monitor" }))
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Delete permanently" }))
+    unmount()
+    await act(async () => finishRequest(new Response(null, { status: 204 })))
+
+    expect(onDeleted).not.toHaveBeenCalled()
+  })
 })

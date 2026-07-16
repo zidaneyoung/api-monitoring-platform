@@ -210,6 +210,23 @@ describe("MonitorForm", () => {
     expect(unload.defaultPrevented).toBe(false)
   })
 
+  it("ignores a completed edit response after the form is superseded", async () => {
+    let finishRequest: (response: Response) => void = () => undefined
+    fetchMock.mockReturnValue(new Promise<Response>((resolve) => { finishRequest = resolve }))
+    const { unmount } = render(<MonitorForm monitor={existingMonitor} />)
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Superseded edit" } })
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }))
+
+    unmount()
+    await act(async () => finishRequest(new Response(JSON.stringify({
+      ...existingMonitor,
+      name: "Superseded edit",
+    }), { status: 200 })))
+
+    expect(navigationMock.push).not.toHaveBeenCalled()
+    expect(navigationMock.refresh).not.toHaveBeenCalled()
+  })
+
   it("uses the same client validation path when editing", async () => {
     render(<MonitorForm monitor={existingMonitor} />)
     fireEvent.change(screen.getByLabelText("URL"), { target: { value: "file:///private" } })

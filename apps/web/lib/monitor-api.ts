@@ -57,7 +57,12 @@ export type MonitorOutcome<T> =
   | { type: "unavailable" }
   | { type: "timeout" }
   | { type: "network_error" }
+  | { type: "cancelled" }
   | { type: "unexpected_response" }
+
+export type MonitorReadOptions = {
+  signal?: AbortSignal
+}
 
 type ErrorPayload = {
   errors?: Array<{ field?: string; message?: string }>
@@ -139,7 +144,13 @@ async function readMonitorList(response: Response): Promise<MonitorListDto | nul
   }
 }
 
-function requestFailure(error: unknown): MonitorOutcome<never> {
+function requestSignal(signal?: AbortSignal): AbortSignal {
+  const timeoutSignal = AbortSignal.timeout(MONITOR_REQUEST_TIMEOUT_MS)
+  return signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal
+}
+
+function requestFailure(error: unknown, signal?: AbortSignal): MonitorOutcome<never> {
+  if (signal?.aborted) return { type: "cancelled" }
   if (
     error instanceof DOMException
     && (error.name === "AbortError" || error.name === "TimeoutError")
@@ -155,9 +166,25 @@ function responseFailure(status: number): MonitorOutcome<never> {
   if (status === 404) return { type: "not_found" }
   if (status === 409) return { type: "conflict" }
   if (status === 429) return { type: "rate_limited" }
-  if (status === 503) return { type: "unavailable" }
+  if (status === 502 || status === 503 || status === 504) return { type: "unavailable" }
   if (status >= 500) return { type: "internal_error" }
   return { type: "unexpected_response" }
+}
+
+function isTransientReadFailure(outcome: MonitorOutcome<unknown>): boolean {
+  return outcome.type === "network_error"
+    || outcome.type === "timeout"
+    || outcome.type === "unavailable"
+}
+
+async function readWithOneRetry<T>(
+  request: () => Promise<MonitorOutcome<T>>,
+  signal?: AbortSignal,
+): Promise<MonitorOutcome<T>> {
+  const first = await request()
+  if (signal?.aborted) return { type: "cancelled" }
+  if (!isTransientReadFailure(first)) return first
+  return request()
 }
 
 export async function createMonitor(
@@ -218,52 +245,58 @@ export async function updateMonitor(
 export async function listMonitors(
   page: number,
   pageSize: number,
+  options: MonitorReadOptions = {},
 ): Promise<MonitorOutcome<MonitorListDto>> {
   const query = new URLSearchParams({
     page: String(page),
     page_size: String(pageSize),
   })
-  try {
-    const response = await fetch(`${API_BASE_URL}/monitors?${query}`, {
-      method: "GET",
-      credentials: "include",
-      cache: "no-store",
-      signal: AbortSignal.timeout(MONITOR_REQUEST_TIMEOUT_MS),
-    })
+  return readWithOneRetry(async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/monitors?${query}`, {
+        method: "GET",
+        credentials: "include",
+        cache: "no-store",
+        signal: requestSignal(options.signal),
+      })
 
-    if (response.ok) {
-      const monitors = await readMonitorList(response)
-      return monitors
-        ? { type: "success", data: monitors }
-        : { type: "unexpected_response" }
+      if (response.ok) {
+        const monitors = await readMonitorList(response)
+        return monitors
+          ? { type: "success", data: monitors }
+          : { type: "unexpected_response" }
+      }
+      return responseFailure(response.status)
+    } catch (error) {
+      return requestFailure(error, options.signal)
     }
-    return responseFailure(response.status)
-  } catch (error) {
-    return requestFailure(error)
-  }
+  }, options.signal)
 }
 
 export async function getMonitor(
   monitorId: string,
+  options: MonitorReadOptions = {},
 ): Promise<MonitorOutcome<MonitorDto>> {
-  try {
-    const response = await fetch(`${API_BASE_URL}/monitors/${encodeURIComponent(monitorId)}`, {
-      method: "GET",
-      credentials: "include",
-      cache: "no-store",
-      signal: AbortSignal.timeout(MONITOR_REQUEST_TIMEOUT_MS),
-    })
+  return readWithOneRetry(async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/monitors/${encodeURIComponent(monitorId)}`, {
+        method: "GET",
+        credentials: "include",
+        cache: "no-store",
+        signal: requestSignal(options.signal),
+      })
 
-    if (response.ok) {
-      const monitor = await readMonitor(response)
-      return monitor
-        ? { type: "success", data: monitor }
-        : { type: "unexpected_response" }
+      if (response.ok) {
+        const monitor = await readMonitor(response)
+        return monitor
+          ? { type: "success", data: monitor }
+          : { type: "unexpected_response" }
+      }
+      return responseFailure(response.status)
+    } catch (error) {
+      return requestFailure(error, options.signal)
     }
-    return responseFailure(response.status)
-  } catch (error) {
-    return requestFailure(error)
-  }
+  }, options.signal)
 }
 
 export async function pauseMonitor(

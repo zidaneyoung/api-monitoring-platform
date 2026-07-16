@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react"
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { MonitorList } from "./monitor-list"
@@ -76,6 +76,7 @@ describe("MonitorList", () => {
     expect(screen.getAllByText("125 ms").length).toBeGreaterThan(0)
     expect(screen.getAllByText("204").length).toBeGreaterThan(0)
     expect(screen.getAllByText("Not checked yet").length).toBeGreaterThan(0)
+    expect(screen.getAllByTitle("UTC: 2026-07-16T17:00:00Z").length).toBeGreaterThan(0)
     expect(screen.queryByText("Checkout")).toBeNull()
     fireEvent.click(screen.getAllByRole("button", { name: "Actions for Owner unknown API" })[0])
     expect((await screen.findByRole("link", { name: "Edit monitor" })).getAttribute("href")).toBe("/monitors/monitor-unknown/edit?return_to=%2Fmonitors%3Fpage%3D1%26page_size%3D10")
@@ -89,7 +90,7 @@ describe("MonitorList", () => {
 
   it("renders a controlled error and retries", async () => {
     fetchMock
-      .mockResolvedValueOnce(new Response(null, { status: 503 }))
+      .mockResolvedValueOnce(new Response(null, { status: 500 }))
       .mockResolvedValueOnce(responsePage({ items: [], total: 0 }))
     render(<MonitorList />)
 
@@ -118,6 +119,31 @@ describe("MonitorList", () => {
     const details = (await screen.findAllByRole("link", { name: "Owner paused API" }))[0]
     expect(fetchMock.mock.calls[0]?.[0]).toBe("http://localhost:8000/monitors?page=2&page_size=25")
     expect(details.getAttribute("href")).toBe("/monitors/monitor-paused?return_to=%2Fmonitors%3Fpage%3D2%26page_size%3D25")
+  })
+
+  it("ignores a superseded page response that finishes last", async () => {
+    let finishFirst: (response: Response) => void = () => undefined
+    let finishSecond: (response: Response) => void = () => undefined
+    fetchMock
+      .mockReturnValueOnce(new Promise<Response>((resolve) => { finishFirst = resolve }))
+      .mockReturnValueOnce(new Promise<Response>((resolve) => { finishSecond = resolve }))
+    const { rerender } = render(<MonitorList initialPage={1} initialPageSize={10} />)
+
+    rerender(<MonitorList initialPage={2} initialPageSize={10} />)
+    await act(async () => finishSecond(responsePage({ items: [pausedMonitor], page: 2, total: 2, pages: 2 })))
+    expect((await screen.findAllByText("Owner paused API")).length).toBeGreaterThan(0)
+
+    await act(async () => finishFirst(responsePage({ items: [unknownMonitor], page: 1, total: 2, pages: 2 })))
+    expect(screen.queryByText("Owner unknown API")).toBeNull()
+    expect(screen.getAllByText("Owner paused API").length).toBeGreaterThan(0)
+  })
+
+  it("renders an invalid backend timestamp safely without changing its source", async () => {
+    fetchMock.mockResolvedValue(responsePage({ items: [{ ...pausedMonitor, last_checked_at: "not-a-timestamp" }], total: 1 }))
+    render(<MonitorList />)
+
+    expect((await screen.findAllByText("Unavailable")).length).toBeGreaterThan(0)
+    expect(screen.getAllByTitle("Received value: not-a-timestamp").length).toBeGreaterThan(0)
   })
 
   it("confirms deletion and removes the monitor from the active list", async () => {
