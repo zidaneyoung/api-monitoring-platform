@@ -1,5 +1,6 @@
 import asyncio
 from datetime import UTC, datetime
+import json
 import os
 from uuid import uuid4
 
@@ -59,11 +60,12 @@ def test_login_verifies_persisted_hash_and_creates_shared_session() -> None:
         finally:
             await redis.aclose()
 
-    async def inspect_and_cleanup(token: str) -> tuple[str | None, int]:
+    async def inspect_and_cleanup(token: str) -> tuple[dict[str, object] | None, int]:
         redis = from_url(redis_url, decode_responses=True)
         key = session_key(token)
         try:
-            stored_user_id = await redis.get(key)
+            value = await redis.get(key)
+            stored_session = json.loads(value) if value is not None else None
             ttl = await redis.ttl(key)
             await redis.delete(key)
         finally:
@@ -73,7 +75,7 @@ def test_login_verifies_persisted_hash_and_creates_shared_session() -> None:
             await session.execute(delete(User).where(User.id == user_id))
             await session.commit()
         await engine.dispose()
-        return stored_user_id, ttl
+        return stored_session, ttl
 
     asyncio.run(setup())
     app.dependency_overrides[get_database_session] = override_session
@@ -86,12 +88,15 @@ def test_login_verifies_persisted_hash_and_creates_shared_session() -> None:
                 json={"email": email.upper(), "password": password},
             )
         token = response.cookies["amp_session"]
-        stored_user_id, ttl = asyncio.run(inspect_and_cleanup(token))
+        stored_session, ttl = asyncio.run(inspect_and_cleanup(token))
 
         assert response.status_code == 200
         assert response.json() == {"id": str(user_id), "email": email}
         assert token not in response.text
-        assert stored_user_id == str(user_id)
+        assert stored_session is not None
+        assert stored_session["user_id"] == str(user_id)
+        assert stored_session["created_at"] == stored_session["last_seen_at"]
+        assert stored_session["idle_expires_at"] <= stored_session["absolute_expires_at"]
         assert 0 < ttl <= 3600
     finally:
         app.dependency_overrides.clear()

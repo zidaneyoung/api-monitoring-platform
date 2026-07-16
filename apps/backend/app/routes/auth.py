@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from ipaddress import ip_address, ip_network
 from uuid import UUID
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
@@ -17,7 +18,7 @@ from app.security.rate_limits import (
     RateLimitStore,
     RateLimitStoreUnavailableError,
     get_rate_limit_store,
-    rate_limit_key,
+    rate_limit_keys,
 )
 from app.security.sessions import (
     SessionStore,
@@ -38,12 +39,19 @@ RATE_LIMIT_RESPONSES = {
         "description": "Authentication state service unavailable.",
     },
 }
+AUTH_ORIGIN_RESPONSE = {
+    status.HTTP_403_FORBIDDEN: {
+        "description": "Authentication request origin is not allowed.",
+    },
+}
+AUTH_MUTATION_RESPONSES = {**RATE_LIMIT_RESPONSES, **AUTH_ORIGIN_RESPONSE}
 
 
 @dataclass(frozen=True)
 class AuthenticatedSession:
     user: User
     token: str
+    cookie_max_age: int
 
 
 def _duplicate_email_error() -> HTTPException:
@@ -57,6 +65,54 @@ def _duplicate_email_error() -> HTTPException:
     )
 
 
+def resolve_client_source(request: Request) -> str:
+    direct_source = request.client.host if request.client is not None else "unknown"
+    try:
+        direct_address = ip_address(direct_source)
+    except ValueError:
+        return direct_source
+
+    if not any(
+        direct_address in ip_network(network)
+        for network in settings.auth_trusted_proxy_networks
+    ):
+        return direct_source
+
+    forwarded_for = request.headers.get("x-forwarded-for")
+    if not forwarded_for:
+        return direct_source
+    forwarded_source = forwarded_for.split(",", 1)[0].strip()
+    try:
+        return str(ip_address(forwarded_source))
+    except ValueError:
+        return direct_source
+
+
+async def account_identifier(request: Request) -> str:
+    try:
+        payload = await request.json()
+    except (TypeError, ValueError):
+        return "invalid"
+    email = payload.get("email") if isinstance(payload, dict) else None
+    return email.strip().lower() if isinstance(email, str) else "invalid"
+
+
+async def enforce_authentication_origin(request: Request) -> None:
+    origin = request.headers.get("origin")
+    if origin is None and settings.auth_allow_missing_origin:
+        return
+    if origin == settings.frontend_origin.rstrip("/"):
+        return
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail={
+            "code": "origin_not_allowed",
+            "message": "Authentication request origin is not allowed.",
+        },
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 async def enforce_rate_limit(
     request: Request,
     store: RateLimitStore,
@@ -65,14 +121,21 @@ async def enforce_rate_limit(
     max_attempts: int,
     window_seconds: int,
 ) -> None:
-    client_identifier = request.client.host if request.client is not None else "unknown"
-    key = rate_limit_key(scope, client_identifier)
+    keys = rate_limit_keys(
+        scope,
+        resolve_client_source(request),
+        await account_identifier(request),
+        settings.auth_rate_limit_key_secret,
+    )
     try:
-        decision = await store.consume(
-            key,
-            max_attempts=max_attempts,
-            window_seconds=window_seconds,
-        )
+        decisions = [
+            await store.consume(
+                key,
+                max_attempts=max_attempts,
+                window_seconds=window_seconds,
+            )
+            for key in keys
+        ]
     except RateLimitStoreUnavailableError:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -83,7 +146,8 @@ async def enforce_rate_limit(
             headers={"Cache-Control": "no-store"},
         ) from None
 
-    if not decision.allowed:
+    blocked = [decision for decision in decisions if not decision.allowed]
+    if blocked:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail={
@@ -91,7 +155,7 @@ async def enforce_rate_limit(
                 "message": "Too many authentication attempts. Try again later.",
             },
             headers={
-                "Retry-After": str(decision.retry_after),
+                "Retry-After": str(max(decision.retry_after for decision in blocked)),
                 "Cache-Control": "no-store",
             },
         )
@@ -160,7 +224,10 @@ async def require_authenticated_session(
         raise _authentication_required_error()
 
     try:
-        user_id = await session_store.get_user_id(session_token, renew=True)
+        validated_session = await session_store.get_session(
+            session_token,
+            renew=True,
+        )
     except SessionStoreUnavailableError:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -170,10 +237,10 @@ async def require_authenticated_session(
             },
         ) from None
 
-    if user_id is None:
+    if validated_session is None:
         raise _authentication_required_error(clear_cookie=True)
 
-    user = await find_user_by_id(session, user_id)
+    user = await find_user_by_id(session, validated_session.user_id)
     if user is None or not user.is_active or user.disabled_at is not None:
         try:
             await session_store.delete_session(session_token)
@@ -181,15 +248,22 @@ async def require_authenticated_session(
             pass
         raise _authentication_required_error(clear_cookie=True)
 
-    return AuthenticatedSession(user=user, token=session_token)
+    return AuthenticatedSession(
+        user=user,
+        token=session_token,
+        cookie_max_age=validated_session.cookie_max_age,
+    )
 
 
 @router.post(
     "/register",
     response_model=PublicUser,
     status_code=status.HTTP_201_CREATED,
-    responses=RATE_LIMIT_RESPONSES,
-    dependencies=[Depends(enforce_registration_rate_limit)],
+    responses=AUTH_MUTATION_RESPONSES,
+    dependencies=[
+        Depends(enforce_authentication_origin),
+        Depends(enforce_registration_rate_limit),
+    ],
 )
 async def register_user(
     payload: RegistrationRequest,
@@ -262,8 +336,11 @@ def _invalid_credentials_error() -> HTTPException:
 @router.post(
     "/login",
     response_model=PublicUser,
-    responses=RATE_LIMIT_RESPONSES,
-    dependencies=[Depends(enforce_login_rate_limit)],
+    responses=AUTH_MUTATION_RESPONSES,
+    dependencies=[
+        Depends(enforce_authentication_origin),
+        Depends(enforce_login_rate_limit),
+    ],
 )
 async def login_user(
     payload: LoginRequest,
@@ -308,12 +385,22 @@ async def current_user(
     response: Response,
     authenticated: AuthenticatedSession = Depends(require_authenticated_session),
 ) -> User:
-    set_session_cookie(response, authenticated.token, settings)
+    set_session_cookie(
+        response,
+        authenticated.token,
+        settings,
+        max_age=authenticated.cookie_max_age,
+    )
     response.headers["Cache-Control"] = "no-store"
     return authenticated.user
 
 
-@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+@router.post(
+    "/logout",
+    status_code=status.HTTP_204_NO_CONTENT,
+    responses=AUTH_ORIGIN_RESPONSE,
+    dependencies=[Depends(enforce_authentication_origin)],
+)
 async def logout_user(
     response: Response,
     session_token: str | None = Cookie(

@@ -7,7 +7,7 @@ from app.database import get_database_session
 from app.main import app
 from app.models import User
 from app.security.passwords import hash_password
-from app.security.sessions import get_session_store
+from app.security.sessions import SessionValidation, get_session_store
 
 
 class FakeSessionStore:
@@ -15,8 +15,18 @@ class FakeSessionStore:
         self.user_ids = user_ids
         self.deleted: list[str] = []
 
-    async def get_user_id(self, token: str, *, renew: bool = True) -> UUID | None:
-        return self.user_ids.get(token)
+    async def get_session(
+        self,
+        token: str,
+        *,
+        renew: bool = True,
+    ) -> SessionValidation | None:
+        user_id = self.user_ids.get(token)
+        return (
+            SessionValidation(user_id=user_id, cookie_max_age=3600)
+            if user_id is not None
+            else None
+        )
 
     async def delete_session(self, token: str) -> None:
         self.deleted.append(token)

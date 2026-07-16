@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from hashlib import sha256
+import hmac
 from typing import Literal
 
 from redis.asyncio import Redis, from_url
@@ -9,6 +10,7 @@ from app.config import load_settings
 
 
 RateLimitScope = Literal["login", "register"]
+RateLimitDimension = Literal["source", "account", "source-account"]
 
 
 class RateLimitStoreUnavailableError(RuntimeError):
@@ -50,9 +52,36 @@ return {1, attempts, math.max(1, math.ceil(ttl_ms / 1000))}
 """
 
 
-def rate_limit_key(scope: RateLimitScope, client_identifier: str) -> str:
-    identifier_digest = sha256(client_identifier.encode("utf-8")).hexdigest()
-    return f"auth:rate:{scope}:{identifier_digest}"
+def rate_limit_key(
+    scope: RateLimitScope,
+    dimension: RateLimitDimension,
+    identifier: str,
+    secret: str,
+) -> str:
+    identifier_digest = hmac.new(
+        secret.encode("utf-8"),
+        f"{scope}:{dimension}:{identifier}".encode("utf-8"),
+        sha256,
+    ).hexdigest()
+    return f"auth:rate:{scope}:{dimension}:{identifier_digest}"
+
+
+def rate_limit_keys(
+    scope: RateLimitScope,
+    source_identifier: str,
+    account_identifier: str,
+    secret: str,
+) -> tuple[str, str, str]:
+    return (
+        rate_limit_key(scope, "source", source_identifier, secret),
+        rate_limit_key(scope, "account", account_identifier, secret),
+        rate_limit_key(
+            scope,
+            "source-account",
+            f"{source_identifier}\0{account_identifier}",
+            secret,
+        ),
+    )
 
 
 class RateLimitStore:

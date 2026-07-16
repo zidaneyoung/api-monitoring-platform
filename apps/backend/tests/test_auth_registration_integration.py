@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 from uuid import uuid4
 
@@ -55,11 +56,12 @@ def test_registration_persists_exactly_one_hashed_user_and_rejects_duplicate() -
             assert password_hash is not None
             return int(count or 0), password_hash
 
-    async def inspect_session(token: str) -> tuple[str | None, int]:
+    async def inspect_session(token: str) -> tuple[dict[str, object] | None, int]:
         redis = from_url(redis_url, decode_responses=True)
         try:
             key = session_key(token)
-            return await redis.get(key), await redis.ttl(key)
+            value = await redis.get(key)
+            return (json.loads(value) if value is not None else None), await redis.ttl(key)
         finally:
             await redis.aclose()
 
@@ -91,7 +93,7 @@ def test_registration_persists_exactly_one_hashed_user_and_rejects_duplicate() -
 
         token = created.cookies["amp_session"]
         count, password_hash = asyncio.run(inspect_user())
-        stored_user_id, session_ttl = asyncio.run(inspect_session(token))
+        stored_session, session_ttl = asyncio.run(inspect_session(token))
         assert created.status_code == 201
         assert created.json()["email"] == email
         assert "password" not in created.text
@@ -99,7 +101,10 @@ def test_registration_persists_exactly_one_hashed_user_and_rejects_duplicate() -
         assert count == 1
         assert password_hash != password
         assert PasswordHasher().verify(password_hash, password) is True
-        assert stored_user_id == created.json()["id"]
+        assert stored_session is not None
+        assert stored_session["user_id"] == created.json()["id"]
+        assert stored_session["created_at"] == stored_session["last_seen_at"]
+        assert stored_session["idle_expires_at"] <= stored_session["absolute_expires_at"]
         assert 0 < session_ttl <= 3600
         assert created.headers["cache-control"] == "no-store"
         assert "amp_session" not in duplicate.cookies
