@@ -22,7 +22,12 @@ def test_rate_limit_is_shared_and_allows_retry_after_natural_reset() -> None:
         first_store = RateLimitStore(first_redis)
         second_store = RateLimitStore(second_redis)
         raw_identity = f"198.51.100.17-{uuid4()}"
-        key = rate_limit_key("login", raw_identity)
+        key = rate_limit_key(
+            "login",
+            "source",
+            raw_identity,
+            "integration-test-secret",
+        )
         try:
             first = await first_store.consume(
                 key,

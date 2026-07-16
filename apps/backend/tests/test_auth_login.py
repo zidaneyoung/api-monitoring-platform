@@ -1,5 +1,6 @@
 import asyncio
 from datetime import UTC, datetime
+import json
 from uuid import UUID, uuid4
 
 from fastapi.testclient import TestClient
@@ -25,10 +26,17 @@ class FakeSessionStore:
 
 class FakeRedis:
     def __init__(self) -> None:
-        self.calls: list[tuple[str, str, int]] = []
+        self.calls: list[tuple[str, str, int, bool]] = []
 
-    async def set(self, key: str, value: str, *, ex: int) -> bool:
-        self.calls.append((key, value, ex))
+    async def set(
+        self,
+        key: str,
+        value: str,
+        *,
+        ex: int,
+        xx: bool = False,
+    ) -> bool:
+        self.calls.append((key, value, ex, xx))
         return True
 
 
@@ -181,6 +189,10 @@ def test_session_store_uses_opaque_token_and_hashed_redis_key() -> None:
     token = asyncio.run(store.create_session(user_id))
 
     assert len(token) >= 32
-    assert redis.calls[0][1:] == (str(user_id), 3600)
+    stored_payload = json.loads(redis.calls[0][1])
+    assert stored_payload["user_id"] == str(user_id)
+    assert stored_payload["created_at"] == stored_payload["last_seen_at"]
+    assert stored_payload["idle_expires_at"] == stored_payload["absolute_expires_at"]
+    assert redis.calls[0][2:] == (3600, False)
     assert token not in redis.calls[0][0]
     assert redis.calls[0][0].startswith("auth:session:")

@@ -1,4 +1,6 @@
+import asyncio
 from datetime import UTC, datetime
+import json
 from uuid import UUID, uuid4
 
 from fastapi import Response
@@ -11,7 +13,14 @@ from app.main import app
 from app.models import User
 from app.routes import auth as auth_routes
 from app.security.passwords import hash_password
-from app.security.sessions import get_session_store, set_session_cookie
+from app.security.sessions import (
+    SessionStore,
+    SessionValidation,
+    clear_session_cookie,
+    get_session_store,
+    session_key,
+    set_session_cookie,
+)
 
 
 class FakeSessionStore:
@@ -24,12 +33,51 @@ class FakeSessionStore:
         self.user_ids["valid-session"] = user_id
         return "valid-session"
 
-    async def get_user_id(self, token: str, *, renew: bool = True) -> UUID | None:
+    async def get_session(
+        self,
+        token: str,
+        *,
+        renew: bool = True,
+    ) -> SessionValidation | None:
         self.get_calls.append((token, renew))
-        return self.user_ids.get(token)
+        user_id = self.user_ids.get(token)
+        return (
+            SessionValidation(user_id=user_id, cookie_max_age=3600)
+            if user_id is not None
+            else None
+        )
 
     async def delete_session(self, token: str) -> None:
         self.deleted.append(token)
+
+
+class MemoryRedis:
+    def __init__(self) -> None:
+        self.values: dict[str, str] = {}
+        self.ttls: dict[str, int] = {}
+
+    async def set(
+        self,
+        key: str,
+        value: str,
+        *,
+        ex: int,
+        xx: bool = False,
+    ) -> bool:
+        if xx and key not in self.values:
+            return False
+        self.values[key] = value
+        self.ttls[key] = ex
+        return True
+
+    async def get(self, key: str) -> str | None:
+        return self.values.get(key)
+
+    async def delete(self, key: str) -> int:
+        existed = key in self.values
+        self.values.pop(key, None)
+        self.ttls.pop(key, None)
+        return int(existed)
 
 
 class FakeDatabaseSession:
@@ -105,6 +153,77 @@ def test_current_user_persists_across_navigation_and_browser_refresh(
     assert "valid-session" not in refresh_response.text
 
 
+def test_idle_renewal_never_extends_the_absolute_session_lifetime() -> None:
+    redis = MemoryRedis()
+    current_time = [1_000.0]
+    store = SessionStore(
+        redis,  # type: ignore[arg-type]
+        ttl_seconds=10,
+        absolute_ttl_seconds=25,
+        clock=lambda: current_time[0],
+    )
+    user_id = uuid4()
+
+    token = asyncio.run(store.create_session(user_id))
+    key = session_key(token)
+    created = json.loads(redis.values[key])
+
+    current_time[0] = 1_008.0
+    first_renewal = asyncio.run(store.get_session(token))
+    first_payload = json.loads(redis.values[key])
+
+    current_time[0] = 1_017.0
+    final_renewal = asyncio.run(store.get_session(token))
+    final_payload = json.loads(redis.values[key])
+
+    current_time[0] = 1_025.0
+    expired = asyncio.run(store.get_session(token))
+
+    assert created == {
+        "absolute_expires_at": 1025,
+        "created_at": 1000,
+        "idle_expires_at": 1010,
+        "last_seen_at": 1000,
+        "user_id": str(user_id),
+    }
+    assert first_renewal == SessionValidation(user_id=user_id, cookie_max_age=10)
+    assert first_payload["last_seen_at"] == 1008
+    assert first_payload["idle_expires_at"] == 1018
+    assert final_renewal == SessionValidation(user_id=user_id, cookie_max_age=8)
+    assert final_payload["last_seen_at"] == 1017
+    assert final_payload["idle_expires_at"] == 1025
+    assert final_payload["absolute_expires_at"] == 1025
+
+    cookie_response = Response()
+    set_session_cookie(
+        cookie_response,
+        token,
+        load_settings(),
+        max_age=final_renewal.cookie_max_age,
+    )
+    assert "Max-Age=8" in cookie_response.headers["set-cookie"]
+
+    assert expired is None
+    assert key not in redis.values
+
+
+def test_idle_expiration_is_authoritative_without_activity() -> None:
+    redis = MemoryRedis()
+    current_time = [2_000.0]
+    store = SessionStore(
+        redis,  # type: ignore[arg-type]
+        ttl_seconds=10,
+        absolute_ttl_seconds=60,
+        clock=lambda: current_time[0],
+    )
+    token = asyncio.run(store.create_session(uuid4()))
+
+    current_time[0] = 2_010.0
+
+    assert asyncio.run(store.get_session(token)) is None
+    assert session_key(token) not in redis.values
+
+
 def test_current_user_rejects_request_without_cookie() -> None:
     store = FakeSessionStore()
     configure_dependencies(None, store)
@@ -168,6 +287,15 @@ def test_production_cookie_is_secure_and_samesite_is_validated(
     assert "Secure" in set_cookie
     assert "SameSite=lax" in set_cookie
 
+    clear_response = Response()
+    clear_session_cookie(clear_response, settings)
+    cleared_cookie = clear_response.headers["set-cookie"]
+    assert "HttpOnly" in cleared_cookie
+    assert "Secure" in cleared_cookie
+    assert "SameSite=lax" in cleared_cookie
+    assert "Path=/" in cleared_cookie
+    assert "Max-Age=0" in cleared_cookie
+
 
 def test_samesite_none_requires_secure_cookie(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ENVIRONMENT", "development")
@@ -175,4 +303,24 @@ def test_samesite_none_requires_secure_cookie(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setenv("SESSION_COOKIE_SAMESITE", "none")
 
     with pytest.raises(ValueError, match="SameSite=None requires secure"):
+        load_settings()
+
+
+def test_cookie_and_configuration_respect_absolute_session_lifetime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SESSION_TTL_SECONDS", "3600")
+    monkeypatch.setenv("SESSION_ABSOLUTE_TTL_SECONDS", "120")
+    settings = load_settings()
+    response = Response()
+
+    set_session_cookie(response, "short-absolute-session", settings)
+
+    assert "Max-Age=120" in response.headers["set-cookie"]
+
+    monkeypatch.setenv("SESSION_ABSOLUTE_TTL_SECONDS", "0")
+    with pytest.raises(
+        ValueError,
+        match="SESSION_ABSOLUTE_TTL_SECONDS must be greater than zero",
+    ):
         load_settings()

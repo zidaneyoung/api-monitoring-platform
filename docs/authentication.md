@@ -19,18 +19,21 @@ password to the login endpoint.
 2. The browser receives the token only in the `amp_session` cookie. The cookie is
    `HttpOnly`, scoped to `/`, configured with `SameSite`, and has a one-hour
    `Max-Age` by default. Production always adds `Secure`.
-3. Redis stores only a SHA-256 digest of the token in the key and maps it to the
-   user ID with the same TTL as the cookie. Raw tokens, passwords, and password
-   hashes are never used in Redis keys or logs.
+3. Redis stores only a SHA-256 digest of the token in the key. Its JSON value
+   contains the user ID, creation time, last-seen time, idle expiration, and
+   absolute expiration. Raw tokens, passwords, and password hashes are never used
+   in Redis keys or logs.
 4. `GET /auth/me` validates the cookie against Redis and the current database user.
-   A valid request atomically renews the Redis TTL and returns only the user's ID
-   and email. The response renews the cookie `Max-Age`, providing a sliding session.
+   A valid request renews the idle expiration without changing the creation or
+   absolute expiration and returns only the user's ID and email. The response
+   renews the cookie only up to the shorter server-side deadline.
 5. Missing, tampered, expired, unknown-user, and disabled-user sessions receive a
    generic `401` response. Invalid user sessions are removed from Redis.
 6. `POST /auth/logout` deletes the active Redis session and expires the browser
    cookie. Repeating logout is safe and does not affect any other user's session.
-7. Once the TTL expires, Redis removes the session and the cookie can no longer
-   authenticate.
+7. Once either the idle or absolute deadline is reached, Redis removes or rejects
+   the session and the cookie can no longer authenticate. Activity can never renew
+   a session beyond its absolute lifetime.
 
 Frontend requests use `credentials: "include"`. Authentication tokens are never
 written to `localStorage` or `sessionStorage`. Backend authorization must use the
@@ -79,20 +82,38 @@ bodies and transport exceptions are never displayed.
 ## Authentication rate limits
 
 Redis holds fixed-window counters shared by all backend instances. Login allows five
-attempts per client address in 60 seconds; registration allows three. The next
-request receives `429 Too Many Requests`, a generic error body, and a `Retry-After`
-header. Requests are accepted again after the window expires. If Redis cannot
-enforce a limit, authentication fails closed with a controlled `503` response.
+attempts in 60 seconds; registration allows three. Each request consumes independent
+source, normalized-account, and source-account counters. This limits one account
+across changing client sources and one abusive source across changing account
+identifiers. The next request receives `429 Too Many Requests`, a generic error
+body, and a `Retry-After` header. Requests are accepted again after the window
+expires. If Redis cannot enforce every layer, authentication fails closed with a
+controlled `503` response.
 
-Keys contain only the route scope and a SHA-256 digest of the resolved client
-address. Submitted email addresses, passwords, cookies, tokens, and request bodies
-are never included in rate-limit keys or logs. Untrusted forwarding headers are not
-used to identify clients.
+Keys contain only the route scope, dimension, and a keyed HMAC digest. Submitted
+email addresses, client addresses, passwords, cookies, tokens, and request bodies
+are never included in rate-limit keys or logs. Forwarded client addresses are used
+only when the direct peer belongs to an explicitly configured trusted IP address or
+CIDR network; otherwise the direct connection address is authoritative.
+
+## Authentication request origins
+
+Unsafe registration, login, and logout requests validate `Origin` against the exact
+configured frontend origin before body validation or rate-limit work. Unexpected,
+opaque, or cross-origin values receive a controlled `403` response. Credentialed
+CORS continues to allow only the exact frontend origin and never uses a wildcard.
+
+Missing `Origin` follows `AUTH_ALLOW_MISSING_ORIGIN`. Development defaults to
+allowing it for command-line and other legitimate non-browser clients. Production
+defaults to rejecting it unless explicitly configured otherwise. This check is
+limited to authentication routes; a repository-wide CSRF design remains a separate
+hardening stage.
 
 ## Configuration
 
 - `SESSION_COOKIE_NAME` defaults to `amp_session`.
 - `SESSION_TTL_SECONDS` defaults to `3600` and must be positive.
+- `SESSION_ABSOLUTE_TTL_SECONDS` defaults to `86400` and must be positive.
 - `SESSION_COOKIE_SAMESITE` accepts `lax`, `strict`, or `none`.
 - `SESSION_COOKIE_SECURE` may enable secure cookies outside production; production
   enables them regardless of this value.
@@ -101,3 +122,8 @@ used to identify clients.
 - `AUTH_LOGIN_RATE_LIMIT_WINDOW_SECONDS` defaults to `60`.
 - `AUTH_REGISTRATION_RATE_LIMIT_ATTEMPTS` defaults to `3`.
 - `AUTH_REGISTRATION_RATE_LIMIT_WINDOW_SECONDS` defaults to `60`.
+- `AUTH_RATE_LIMIT_KEY_SECRET` keys privacy-preserving rate-limit digests and must
+  be independent, nonempty secret material.
+- `AUTH_TRUSTED_PROXY_ADDRESSES` is a comma-separated allowlist of direct proxy IPs
+  or CIDR networks. It is empty by default.
+- `AUTH_ALLOW_MISSING_ORIGIN` controls the explicit missing-origin policy.

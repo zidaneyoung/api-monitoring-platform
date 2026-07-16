@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 from uuid import uuid4
 
@@ -28,6 +29,7 @@ def test_session_is_shared_renewed_and_rejected_after_expiration() -> None:
             await first_redis.expire(key, 5)
             resolved_user_id = await second_store.get_user_id(token, renew=True)
             renewed_ttl = await first_redis.ttl(key)
+            renewed_payload = json.loads(await first_redis.get(key))
             invalid_user_id = await second_store.get_user_id(
                 "invalid-session",
                 renew=True,
@@ -41,6 +43,9 @@ def test_session_is_shared_renewed_and_rejected_after_expiration() -> None:
             assert invalid_user_id is None
             assert expired_user_id is None
             assert token not in key
+            assert renewed_payload["user_id"] == str(user_id)
+            assert renewed_payload["created_at"] <= renewed_payload["last_seen_at"]
+            assert renewed_payload["idle_expires_at"] <= renewed_payload["absolute_expires_at"]
         finally:
             await first_redis.delete(key)
             await first_redis.aclose()

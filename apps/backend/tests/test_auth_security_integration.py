@@ -1,5 +1,6 @@
 import asyncio
 from datetime import UTC, datetime
+import json
 import os
 from urllib.parse import urlparse
 from uuid import UUID, uuid4
@@ -106,11 +107,12 @@ def test_complete_authentication_lifecycle_and_current_user_isolation(
         finally:
             await redis.aclose()
 
-    async def inspect_session(token: str) -> tuple[str | None, str]:
+    async def inspect_session(token: str) -> tuple[dict[str, object] | None, str]:
         redis = from_url(redis_url, decode_responses=True)
         key = session_key(token)
         try:
-            return await redis.get(key), key
+                value = await redis.get(key)
+                return (json.loads(value) if value is not None else None), key
         finally:
             await redis.aclose()
 
@@ -252,8 +254,10 @@ def test_complete_authentication_lifecycle_and_current_user_isolation(
         assert alpha_still_authenticated.json()["id"] == str(alpha_id)
         assert alpha_expired.status_code == 401
         assert anonymous_current_user.status_code == 401
-        assert alpha_session_value == str(alpha_id)
-        assert beta_session_value == str(beta_id)
+        assert alpha_session_value is not None
+        assert beta_session_value is not None
+        assert alpha_session_value["user_id"] == str(alpha_id)
+        assert beta_session_value["user_id"] == str(beta_id)
 
         assert PasswordHasher().verify(alpha_hash, passwords["alpha"])
         assert PasswordHasher().verify(beta_hash, passwords["beta"])

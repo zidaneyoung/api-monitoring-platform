@@ -1,9 +1,12 @@
+import asyncio
+from dataclasses import replace
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
 from fastapi.testclient import TestClient
 import pytest
+from starlette.requests import Request
 
 from app.config import load_settings
 from app.database import get_database_session
@@ -15,6 +18,7 @@ from app.security.rate_limits import (
     RateLimitStoreUnavailableError,
     get_rate_limit_store,
     rate_limit_key,
+    rate_limit_keys,
 )
 from app.security.sessions import get_session_store
 
@@ -149,10 +153,13 @@ def test_login_threshold_short_circuits_and_retries_after_window(
     assert verify_password.call_count == 6
 
     keys = [call[0] for call in store.calls]
-    assert len(set(keys)) == 1
-    assert keys[0].startswith("auth:rate:login:")
+    assert len(keys) == 21
+    assert len(set(keys)) == 3
+    assert any(key.startswith("auth:rate:login:source:") for key in keys)
+    assert any(key.startswith("auth:rate:login:account:") for key in keys)
+    assert any(key.startswith("auth:rate:login:source-account:") for key in keys)
     for sensitive_value in ("testclient", payload["email"], payload["password"]):
-        assert sensitive_value not in keys[0]
+        assert all(sensitive_value not in key for key in keys)
         assert sensitive_value not in caplog.text
 
 
@@ -241,6 +248,94 @@ def test_rate_limit_store_failure_is_controlled_and_fails_closed(
 
 
 @pytest.mark.parametrize(
+    ("endpoint", "payload"),
+    [
+        (
+            "/auth/login",
+            {"email": "user@example.com", "password": "correct-horse"},
+        ),
+        (
+            "/auth/register",
+            {"email": "new@example.com", "password": "correct-horse"},
+        ),
+        ("/auth/logout", None),
+    ],
+)
+def test_unsafe_authentication_routes_reject_an_unapproved_origin(
+    endpoint: str,
+    payload: dict[str, str] | None,
+) -> None:
+    store = FakeRateLimitStore()
+    configure_dependencies(store)
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                endpoint,
+                json=payload,
+                headers={"Origin": "https://attacker.example"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 403
+    assert response.json() == {
+        "detail": {
+            "code": "origin_not_allowed",
+            "message": "Authentication request origin is not allowed.",
+        }
+    }
+    assert response.headers["cache-control"] == "no-store"
+    assert "attacker.example" not in response.text
+    assert store.calls == []
+
+
+def test_approved_frontend_origin_continues_to_authenticate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = FakeRateLimitStore()
+    configure_dependencies(store)
+    find_user = AsyncMock(return_value=None)
+    monkeypatch.setattr(auth_routes, "find_user_by_email", find_user)
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/auth/login",
+                json={"email": "user@example.com", "password": "correct-horse"},
+                headers={"Origin": auth_routes.settings.frontend_origin},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == "invalid_credentials"
+    assert len(store.calls) == 3
+
+
+def test_missing_origin_follows_the_configured_policy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = FakeRateLimitStore()
+    configure_dependencies(store)
+    monkeypatch.setattr(
+        auth_routes,
+        "settings",
+        replace(auth_routes.settings, auth_allow_missing_origin=False),
+    )
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/auth/login",
+                json={"email": "user@example.com", "password": "correct-horse"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "origin_not_allowed"
+    assert store.calls == []
+
+
+@pytest.mark.parametrize(
     ("endpoint", "payload", "limit"),
     [
         (
@@ -274,7 +369,7 @@ def test_malformed_requests_are_limited_before_body_validation(
 
     assert [response.status_code for response in validation_failures] == [422] * limit
     assert limited.status_code == 429
-    assert len(store.calls) == limit + 1
+    assert len(store.calls) == (limit + 1) * 3
 
 
 def test_authentication_openapi_documents_rate_limit_status() -> None:
@@ -282,6 +377,9 @@ def test_authentication_openapi_documents_rate_limit_status() -> None:
 
     assert "429" in schema["paths"]["/auth/login"]["post"]["responses"]
     assert "429" in schema["paths"]["/auth/register"]["post"]["responses"]
+    assert "403" in schema["paths"]["/auth/login"]["post"]["responses"]
+    assert "403" in schema["paths"]["/auth/register"]["post"]["responses"]
+    assert "403" in schema["paths"]["/auth/logout"]["post"]["responses"]
 
 
 @pytest.mark.parametrize(
@@ -303,10 +401,140 @@ def test_rate_limit_configuration_requires_positive_values(
         load_settings()
 
 
+def test_authentication_security_configuration_is_validated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AUTH_RATE_LIMIT_KEY_SECRET", "")
+    with pytest.raises(ValueError, match="AUTH_RATE_LIMIT_KEY_SECRET must not be empty"):
+        load_settings()
+
+    monkeypatch.setenv("AUTH_RATE_LIMIT_KEY_SECRET", "test-secret")
+    monkeypatch.setenv("AUTH_TRUSTED_PROXY_ADDRESSES", "not-an-address")
+    with pytest.raises(ValueError):
+        load_settings()
+
+    monkeypatch.setenv("AUTH_TRUSTED_PROXY_ADDRESSES", "127.0.0.1,10.0.0.0/8")
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.delenv("AUTH_ALLOW_MISSING_ORIGIN", raising=False)
+    settings = load_settings()
+
+    assert settings.auth_allow_missing_origin is False
+    assert settings.auth_trusted_proxy_networks == ("127.0.0.1/32", "10.0.0.0/8")
+
+
 def test_rate_limit_key_contains_only_scope_and_identity_digest() -> None:
     raw_identity = "203.0.113.42"
-    key = rate_limit_key("login", raw_identity)
+    key = rate_limit_key("login", "source", raw_identity, "test-secret")
 
-    assert key.startswith("auth:rate:login:")
+    assert key.startswith("auth:rate:login:source:")
     assert raw_identity not in key
     assert len(key.rsplit(":", 1)[-1]) == 64
+
+
+def test_layered_keys_limit_accounts_and_sources_without_raw_identifiers() -> None:
+    secret = "independent-test-secret"
+    first = rate_limit_keys(
+        "login",
+        "198.51.100.1",
+        "target@example.com",
+        secret,
+    )
+    second_source = rate_limit_keys(
+        "login",
+        "198.51.100.2",
+        "target@example.com",
+        secret,
+    )
+    second_account = rate_limit_keys(
+        "login",
+        "198.51.100.1",
+        "other@example.com",
+        secret,
+    )
+
+    assert first[1] == second_source[1]
+    assert first[0] != second_source[0]
+    assert first[0] == second_account[0]
+    assert first[1] != second_account[1]
+    assert len(set(first)) == 3
+    assert all("target@example.com" not in key for key in first)
+    assert first != rate_limit_keys(
+        "login",
+        "198.51.100.1",
+        "target@example.com",
+        "different-secret",
+    )
+
+
+def test_layered_thresholds_block_distributed_account_and_source_abuse() -> None:
+    async def exercise() -> None:
+        account_store = FakeRateLimitStore()
+        account_decisions = []
+        for index in range(6):
+            keys = rate_limit_keys(
+                "login",
+                f"198.51.100.{index}",
+                "target@example.com",
+                "test-secret",
+            )
+            account_decisions.append([
+                await account_store.consume(
+                    key,
+                    max_attempts=5,
+                    window_seconds=60,
+                )
+                for key in keys
+            ])
+
+        source_store = FakeRateLimitStore()
+        source_decisions = []
+        for index in range(6):
+            keys = rate_limit_keys(
+                "login",
+                "203.0.113.8",
+                f"target-{index}@example.com",
+                "test-secret",
+            )
+            source_decisions.append([
+                await source_store.consume(
+                    key,
+                    max_attempts=5,
+                    window_seconds=60,
+                )
+                for key in keys
+            ])
+
+        assert all(decision.allowed for batch in account_decisions[:5] for decision in batch)
+        assert account_decisions[5][1].allowed is False
+        assert all(decision.allowed for batch in source_decisions[:5] for decision in batch)
+        assert source_decisions[5][0].allowed is False
+
+    asyncio.run(exercise())
+
+
+def test_forwarded_client_address_requires_an_explicitly_trusted_proxy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = Request({
+        "type": "http",
+        "method": "POST",
+        "path": "/auth/login",
+        "headers": [(b"x-forwarded-for", b"198.51.100.22")],
+        "client": ("203.0.113.9", 4321),
+        "scheme": "http",
+        "server": ("testserver", 80),
+        "query_string": b"",
+    })
+
+    assert auth_routes.resolve_client_source(request) == "203.0.113.9"
+
+    monkeypatch.setattr(
+        auth_routes,
+        "settings",
+        replace(
+            auth_routes.settings,
+            auth_trusted_proxy_networks=("203.0.113.9/32",),
+        ),
+    )
+
+    assert auth_routes.resolve_client_source(request) == "198.51.100.22"
