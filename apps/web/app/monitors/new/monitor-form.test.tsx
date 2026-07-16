@@ -84,15 +84,19 @@ describe("MonitorForm", () => {
 
   it("shows field-specific validation and preserves entered values", async () => {
     fetchMock.mockResolvedValue(new Response(JSON.stringify({
-      errors: [{ field: "url", message: "Enter a valid HTTP or HTTPS URL." }],
+      detail: {
+        code: "unsafe_monitor_destination",
+        message: "Monitor URL must resolve to a public destination.",
+      },
     }), { status: 422 }))
     render(<MonitorForm />)
     fillRequiredFields()
 
     fireEvent.click(screen.getByRole("button", { name: "Create monitor" }))
 
-    expect(await screen.findByText("Enter a valid HTTP or HTTPS URL.")).toBeTruthy()
+    expect(await screen.findByText("Monitor URL must resolve to a public destination.")).toBeTruthy()
     expect(screen.getByLabelText("URL").getAttribute("aria-invalid")).toBe("true")
+    expect(screen.getByLabelText("Name").getAttribute("aria-invalid")).toBe("false")
     expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("Public API")
     expect(navigationMock.push).not.toHaveBeenCalled()
   })

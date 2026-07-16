@@ -57,6 +57,7 @@ export type MonitorOutcome<T> =
 
 type ErrorPayload = {
   errors?: Array<{ field?: string; message?: string }>
+  detail?: { code?: string; message?: string }
 }
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000"
@@ -88,6 +89,12 @@ async function readValidationErrors(response: Response): Promise<MonitorError[]>
         field: normalizeField(error.field),
         message: error.message ?? "Enter a valid value.",
       }))
+    }
+    if (payload.detail?.code === "unsafe_monitor_destination") {
+      return [{
+        field: "url",
+        message: payload.detail.message || "Monitor URL must resolve to a public destination.",
+      }]
     }
   } catch {
     // Malformed responses receive a controlled fallback.

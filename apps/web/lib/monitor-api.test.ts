@@ -64,6 +64,23 @@ describe("createMonitor", () => {
     })
   })
 
+  it("maps a blocked destination response to the URL field", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      detail: {
+        code: "unsafe_monitor_destination",
+        message: "Monitor URL must resolve to a public destination.",
+      },
+    }), { status: 422 })))
+
+    await expect(createMonitor(payload)).resolves.toEqual({
+      type: "validation",
+      errors: [{
+        field: "url",
+        message: "Monitor URL must resolve to a public destination.",
+      }],
+    })
+  })
+
   it.each([
     [401, { type: "unauthenticated" }],
     [503, { type: "unavailable" }],
@@ -103,6 +120,23 @@ describe("updateMonitor", () => {
     expect(options.method).toBe("PUT")
     expect(options.credentials).toBe("include")
     expect(options.body).toBe(JSON.stringify(payload))
+  })
+
+  it("maps a blocked edited destination to the URL field", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      detail: {
+        code: "unsafe_monitor_destination",
+        message: "Monitor URL must resolve to a public destination.",
+      },
+    }), { status: 422 })))
+
+    await expect(updateMonitor("monitor-1", payload)).resolves.toEqual({
+      type: "validation",
+      errors: [{
+        field: "url",
+        message: "Monitor URL must resolve to a public destination.",
+      }],
+    })
   })
 
   it.each([
