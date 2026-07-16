@@ -316,6 +316,7 @@
 }
 
 .auth-page .auth-status {
+  min-height: 46px;
   margin: -8px 0 18px;
   padding: 10px 12px;
   border: 1px solid var(--auth-border);
@@ -327,13 +328,7 @@
 }
 
 .auth-page .auth-status[data-tone="idle"] {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
-  clip-path: inset(50%);
-  white-space: nowrap;
+  visibility: hidden;
 }
 
 .auth-page .auth-status[data-tone="error"] {

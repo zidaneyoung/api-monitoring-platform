@@ -62,6 +62,18 @@ The root `.env` controls the Compose database credentials and exposed web ports:
 
 The frontend browser URL for the API stays on `http://localhost:8000` unless you change the backend port.
 
+When running Next.js directly on the host, keep both frontend API variables on the
+host address:
+
+```dotenv
+INTERNAL_API_BASE_URL=http://localhost:8000
+NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
+```
+
+When running through Compose, `NEXT_PUBLIC_API_BASE_URL` remains the browser-visible
+host URL, while `compose.yaml` overrides `INTERNAL_API_BASE_URL` to
+`http://backend:8000` for server-side route verification inside the Compose network.
+
 ## Start the stack
 
 Start all services from the repository root:
@@ -148,6 +160,9 @@ Use the volume-removal form when you want a clean database reset.
 - Container startup fails: inspect logs with `docker compose logs -f backend frontend db redis worker scheduler`.
 - Services are stale or unhealthy after config changes: run `docker compose down -v --remove-orphans` and start again.
 - Frontend cannot call the API: confirm `apps/web/.env.local` still sets `NEXT_PUBLIC_API_BASE_URL=http://localhost:8000` or the backend port you configured.
+- Authentication returns database errors after pulling new backend code: run `docker compose exec backend alembic current`, then `docker compose exec backend alembic upgrade head` if the revision is behind.
+- Frontend behavior does not match the current source: rebuild the frontend image with `docker compose build --no-cache frontend`, recreate it with `docker compose up -d --force-recreate frontend`, and confirm the health endpoint before retesting.
+- A bind-mounted frontend reports missing or stale packages: recreate the `frontend_node_modules` volume or run a clean `npm ci` in the same runtime that starts Next.js. Do not mix host and container `node_modules` directories.
 
 ## Notes
 

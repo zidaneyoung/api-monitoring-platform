@@ -22,6 +22,14 @@ export type AuthOutcome<T> =
   | { type: "network_error" }
   | { type: "unexpected_response" }
 
+export type LogoutOutcome =
+  | { type: "success" }
+  | { type: "cleared" }
+  | { type: "unauthenticated" }
+  | { type: "timeout" }
+  | { type: "network_error" }
+  | { type: "unexpected_response" }
+
 type ErrorPayload = {
   errors?: Array<{ field?: string; message?: string }>
 }
@@ -166,7 +174,7 @@ export async function getCurrentUser(): Promise<AuthOutcome<CurrentUser>> {
   }
 }
 
-export async function logoutUser(): Promise<void> {
+export async function logoutUser(): Promise<LogoutOutcome> {
   try {
     const response = await fetch(`${API_BASE_URL}/auth/logout`, {
       method: "POST",
@@ -175,10 +183,15 @@ export async function logoutUser(): Promise<void> {
       signal: AbortSignal.timeout(AUTH_STATE_TIMEOUT_MS),
     })
 
-    if (response.ok) return
-  } catch {
-    // Logout receives a richer result contract in the shell UX follow-up.
+    if (response.status === 204) return { type: "success" }
+    if (response.status === 401) return { type: "unauthenticated" }
+    if (response.status === 503) {
+      // The backend's controlled 503 contract still expires the browser cookie.
+      return { type: "cleared" }
+    }
+    return { type: "unexpected_response" }
+  } catch (error) {
+    const failure = requestFailure(error)
+    return failure.type === "timeout" ? failure : { type: "network_error" }
   }
-
-  throw new Error("Unable to log out. Try again.")
 }

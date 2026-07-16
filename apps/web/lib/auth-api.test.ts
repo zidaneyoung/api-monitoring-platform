@@ -179,7 +179,7 @@ describe("logoutUser", () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }))
     vi.stubGlobal("fetch", fetchMock)
 
-    await logoutUser()
+    await expect(logoutUser()).resolves.toEqual({ type: "success" })
 
     expect(fetchMock).toHaveBeenCalledWith(
       "http://localhost:8000/auth/logout",
@@ -193,10 +193,19 @@ describe("logoutUser", () => {
   })
 
   it.each([
-    ["server failure", vi.fn().mockResolvedValue(new Response(null, { status: 503 }))],
-    ["network failure", vi.fn().mockRejectedValue(new Error("sensitive transport detail"))],
-  ])("returns a controlled error for %s", async (_label, fetchMock) => {
-    vi.stubGlobal("fetch", fetchMock)
-    await expect(logoutUser()).rejects.toThrow("Unable to log out. Try again.")
+    [503, { type: "cleared" }],
+    [401, { type: "unauthenticated" }],
+    [500, { type: "unexpected_response" }],
+  ])("returns a safe outcome for status %s", async (status, expected) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status })))
+    await expect(logoutUser()).resolves.toEqual(expected)
+  })
+
+  it("distinguishes a timeout from a network failure", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValueOnce(new DOMException("timed out", "TimeoutError")))
+    await expect(logoutUser()).resolves.toEqual({ type: "timeout" })
+
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValueOnce(new Error("sensitive transport detail")))
+    await expect(logoutUser()).resolves.toEqual({ type: "network_error" })
   })
 })

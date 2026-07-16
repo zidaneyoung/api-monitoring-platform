@@ -10,7 +10,7 @@ import {
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { FormEvent } from "react";
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 
 import { ThemeToggle } from "@/components/theme-toggle";
 import type { AuthOutcome, CurrentUser } from "@/lib/auth-api";
@@ -29,6 +29,8 @@ type AuthCopy = {
   alternateHref: "/login" | "/register";
   alternateText: string;
 };
+
+const MAX_PASSWORD_LENGTH = 128;
 
 const COPY = {
   login: {
@@ -62,6 +64,7 @@ function validateEmail(value: string) {
 function validatePassword(value: string) {
   if (!value) return "Password is required.";
   if (value.length < 8) return "Password must be at least 8 characters.";
+  if (value.length > MAX_PASSWORD_LENGTH) return `Password must be ${MAX_PASSWORD_LENGTH} characters or fewer.`;
   return "";
 }
 
@@ -109,6 +112,10 @@ export function AuthForm({
   const router = useRouter();
   const formId = useId();
   const isRegister = mode === "register";
+  const emailRef = useRef<HTMLInputElement>(null);
+  const passwordRef = useRef<HTMLInputElement>(null);
+  const confirmPasswordRef = useRef<HTMLInputElement>(null);
+  const statusRef = useRef<HTMLParagraphElement>(null);
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -123,6 +130,20 @@ export function AuthForm({
   const [serverErrors, setServerErrors] = useState({ email: "", password: "" });
   const [retryAt, setRetryAt] = useState<number | null>(null);
   const [retrySeconds, setRetrySeconds] = useState(0);
+  const [statusFocusRequest, setStatusFocusRequest] = useState(0);
+  const [fieldFocusRequest, setFieldFocusRequest] = useState<{
+    field: "email" | "password";
+    request: number;
+  } | null>(null);
+
+  useEffect(() => {
+    if (statusFocusRequest > 0) statusRef.current?.focus();
+  }, [statusFocusRequest]);
+
+  useEffect(() => {
+    if (fieldFocusRequest?.field === "email") emailRef.current?.focus();
+    if (fieldFocusRequest?.field === "password") passwordRef.current?.focus();
+  }, [fieldFocusRequest]);
 
   useEffect(() => {
     if (retryAt === null) return;
@@ -160,23 +181,39 @@ export function AuthForm({
     email.trim() && password && (!isRegister || confirmPassword),
   );
 
+  function focusFormStatus() {
+    setStatusFocusRequest((current) => current + 1);
+  }
+
+  function focusField(field: "email" | "password") {
+    setFieldFocusRequest((current) => ({
+      field,
+      request: (current?.request ?? 0) + 1,
+    }));
+  }
+
   function applyFailure(outcome: Exclude<AuthOutcome<CurrentUser>, { type: "success" }>) {
     setIsSubmitting(false);
     setTone("error");
 
     switch (outcome.type) {
-      case "validation":
+      case "validation": {
+        const emailMessage = outcome.errors.find((error) => error.field === "email")?.message ?? "";
+        const passwordMessage = outcome.errors.find((error) => error.field === "password")?.message ?? "";
+        const formMessage = outcome.errors.find((error) => error.field === "form")?.message;
         setServerErrors({
-          email: outcome.errors.find((error) => error.field === "email")?.message ?? "",
-          password: outcome.errors.find((error) => error.field === "password")?.message ?? "",
+          email: emailMessage,
+          password: passwordMessage,
         });
-        setStatus(
-          outcome.errors.find((error) => error.field === "form")?.message
-          ?? "Fix the highlighted fields and try again.",
-        );
+        setStatus(formMessage ?? "Fix the highlighted fields and try again.");
+        if (emailMessage) focusField("email");
+        else if (passwordMessage) focusField("password");
+        else focusFormStatus();
         return;
+      }
       case "invalid_credentials":
         setStatus("Invalid email or password.");
+        focusFormStatus();
         return;
       case "conflict":
         setServerErrors((current) => ({
@@ -184,28 +221,35 @@ export function AuthForm({
           email: "An account with this email already exists.",
         }));
         setStatus("Fix the highlighted fields and try again.");
+        focusField("email");
         return;
       case "rate_limited": {
         const deadline = Date.now() + outcome.retryAfterSeconds * 1_000;
         setRetrySeconds(outcome.retryAfterSeconds);
         setRetryAt(deadline);
         setStatus(retryMessage(deadline, outcome.retryAfterSeconds));
+        focusFormStatus();
         return;
       }
       case "unavailable":
         setStatus("Authentication is temporarily unavailable. Try again.");
+        focusFormStatus();
         return;
       case "timeout":
         setStatus("The request timed out. Try again.");
+        focusFormStatus();
         return;
       case "network_error":
         setStatus("Unable to reach the service. Check your connection and try again.");
+        focusFormStatus();
         return;
       case "unauthenticated":
         setStatus("Your session expired. Log in again.");
+        focusFormStatus();
         return;
       case "unexpected_response":
         setStatus("Unable to complete the request. Try again.");
+        focusFormStatus();
         return;
     }
   }
@@ -216,16 +260,18 @@ export function AuthForm({
     setSubmitAttempted(true);
     setServerErrors({ email: "", password: "" });
 
-    const hasError = Boolean(
-      validateEmail(email) ||
-        validatePassword(password) ||
-        (isRegister && (!confirmPassword || confirmPassword !== password)),
-    );
+    const emailIssue = validateEmail(email);
+    const passwordIssue = validatePassword(password);
+    const confirmIssue = isRegister && (!confirmPassword || confirmPassword !== password);
+    const hasError = Boolean(emailIssue || passwordIssue || confirmIssue);
 
     if (hasError) {
       setTouched({ email: true, password: true, confirm: true });
       setTone("error");
       setStatus("Fix the highlighted fields and try again.");
+      if (emailIssue) emailRef.current?.focus();
+      else if (passwordIssue) passwordRef.current?.focus();
+      else confirmPasswordRef.current?.focus();
       return;
     }
 
@@ -263,20 +309,38 @@ export function AuthForm({
           <p>{copy.description}</p>
         </header>
 
-        <p className="auth-status" aria-live="polite" data-tone={tone}>
+        <p
+          ref={statusRef}
+          id={`${formId}-status`}
+          className="auth-status"
+          role={tone === "error" ? "alert" : "status"}
+          aria-live={tone === "error" ? "assertive" : "polite"}
+          aria-atomic="true"
+          tabIndex={-1}
+          data-tone={tone}
+        >
           {status}
         </p>
 
-        <form className="auth-form" onSubmit={handleSubmit} noValidate aria-busy={isSubmitting}>
+        <form
+          className="auth-form"
+          onSubmit={handleSubmit}
+          noValidate
+          aria-busy={isSubmitting}
+          aria-describedby={tone === "error" ? `${formId}-status` : undefined}
+        >
           <div className="auth-field" data-invalid={Boolean(emailError)}>
             <label htmlFor={`${formId}-email`}>Email address</label>
             <div className="input-shell">
               <Mail aria-hidden="true" />
               <input
+                ref={emailRef}
                 id={`${formId}-email`}
                 type="email"
                 inputMode="email"
                 autoComplete="email"
+                autoCapitalize="none"
+                spellCheck={false}
                 placeholder="name@company.com"
                 value={email}
                 onChange={(event) => {
@@ -297,11 +361,13 @@ export function AuthForm({
             <div className="input-shell">
               <LockKeyhole aria-hidden="true" />
               <input
+                ref={passwordRef}
                 id={`${formId}-password`}
                 type={showPassword ? "text" : "password"}
                 autoComplete={isRegister ? "new-password" : "current-password"}
                 placeholder="At least 8 characters"
                 value={password}
+                maxLength={MAX_PASSWORD_LENGTH}
                 onChange={(event) => {
                   setPassword(event.target.value);
                   setServerErrors((current) => ({ ...current, password: "" }));
@@ -326,11 +392,13 @@ export function AuthForm({
               <div className="input-shell">
                 <LockKeyhole aria-hidden="true" />
                 <input
+                  ref={confirmPasswordRef}
                   id={`${formId}-confirm`}
                   type={showConfirmPassword ? "text" : "password"}
                   autoComplete="new-password"
                   placeholder="Repeat your password"
                   value={confirmPassword}
+                  maxLength={MAX_PASSWORD_LENGTH}
                   onChange={(event) => setConfirmPassword(event.target.value)}
                   onBlur={() => setTouched((current) => ({ ...current, confirm: true }))}
                   disabled={isSubmitting}
