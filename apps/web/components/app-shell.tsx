@@ -135,7 +135,11 @@ function ApplicationHeader({ pathname }: { pathname: string }) {
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
-  const isStandalonePage = pathname === "/login" || pathname === "/register"
+  const isStandalonePage = (
+    pathname === "/login"
+    || pathname === "/register"
+    || pathname === "/auth-unavailable"
+  )
 
   if (isStandalonePage) return children
 

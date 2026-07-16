@@ -65,10 +65,16 @@ describe("AuthForm", () => {
     expect(screen.getByRole("button", { name: "Working…" }).getAttribute("disabled")).not.toBeNull()
     expect(screen.getByText("Signing in…")).toBeTruthy()
 
-    await act(async () => completeRequest(new Response(JSON.stringify({ email: "qa@example.com" }), { status: 200 })))
+    await act(async () => completeRequest(new Response(JSON.stringify({
+      id: "user-1",
+      email: "qa@example.com",
+    }), { status: 200 })))
     expect(await screen.findByText("Signed in. Redirecting…")).toBeTruthy()
     expect(navigationMock.replace).toHaveBeenCalledWith("/monitors?state=ready")
     expect(navigationMock.refresh).toHaveBeenCalledOnce()
+    expect(screen.getByRole("link", { name: "Create one" }).getAttribute("href")).toBe(
+      "/register?next=%2Fmonitors%3Fstate%3Dready",
+    )
     const [, options] = fetchMock.mock.calls[0] as [string, RequestInit]
     expect(options.credentials).toBe("include")
     expect(localStorage.length).toBe(0)
@@ -110,7 +116,10 @@ describe("AuthForm", () => {
   })
 
   it("registers, creates a session, and redirects to the app", async () => {
-    fetchMock.mockResolvedValue(new Response(JSON.stringify({ email: "jane@example.com" }), { status: 201 }))
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      id: "user-2",
+      email: "jane@example.com",
+    }), { status: 201 }))
     render(<AuthForm mode="register" />)
 
     fireEvent.change(screen.getByLabelText("Email address"), { target: { value: "Jane@Example.COM" } })
@@ -138,7 +147,7 @@ describe("AuthForm", () => {
     fireEvent.change(screen.getByLabelText("Confirm password"), { target: { value: "monitor123" } })
     fireEvent.click(screen.getByRole("button", { name: "Create account" }))
 
-    expect(await screen.findByText("Unable to reach the service. Try again.")).toBeTruthy()
+    expect(await screen.findByText("Unable to reach the service. Check your connection and try again.")).toBeTruthy()
     expect(screen.getByRole("button", { name: "Create account" }).getAttribute("disabled")).toBeNull()
     expect(navigationMock.replace).not.toHaveBeenCalled()
   })
@@ -156,6 +165,39 @@ describe("AuthForm", () => {
 
     expect(await screen.findByText("An account with this email already exists.")).toBeTruthy()
     expect(screen.getByText("Fix the highlighted fields and try again.")).toBeTruthy()
+  })
+
+  it("distinguishes service unavailability from invalid credentials", async () => {
+    fetchMock.mockResolvedValue(new Response(null, { status: 503 }))
+    render(<AuthForm mode="login" />)
+
+    fireEvent.change(screen.getByLabelText("Email address"), { target: { value: "qa@example.com" } })
+    fireEvent.change(screen.getByLabelText("Password"), { target: { value: "monitor123" } })
+    fireEvent.click(screen.getByRole("button", { name: "Log in" }))
+
+    expect(await screen.findByText("Authentication is temporarily unavailable. Try again.")).toBeTruthy()
+    expect(screen.queryByText("Invalid email or password.")).toBeNull()
+  })
+
+  it("disables retries until the Retry-After countdown ends", async () => {
+    vi.useFakeTimers()
+    fetchMock.mockResolvedValue(new Response(null, {
+      status: 429,
+      headers: { "Retry-After": "2" },
+    }))
+    render(<AuthForm mode="login" />)
+
+    fireEvent.change(screen.getByLabelText("Email address"), { target: { value: "qa@example.com" } })
+    fireEvent.change(screen.getByLabelText("Password"), { target: { value: "monitor123" } })
+    fireEvent.click(screen.getByRole("button", { name: "Log in" }))
+
+    await act(async () => Promise.resolve())
+    expect(screen.getByRole("button", { name: "Try again in 2s" }).getAttribute("disabled")).not.toBeNull()
+    expect(screen.getByText(/Too many attempts\. Try again after/)).toBeTruthy()
+
+    await act(async () => vi.advanceTimersByTimeAsync(2_000))
+    expect(screen.getByRole("button", { name: "Log in" }).getAttribute("disabled")).toBeNull()
+    expect(screen.getByText("You can try again now.")).toBeTruthy()
   })
 
   it("toggles and persists the selected color theme", () => {

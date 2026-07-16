@@ -558,6 +558,22 @@
   filter: grayscale(0.35);
 }
 
+.auth-page .auth-unavailable-actions {
+  display: grid;
+  gap: 4px;
+}
+
+.auth-page .auth-unavailable-actions .auth-footer a {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.auth-page .auth-unavailable-actions .auth-footer svg {
+  width: 14px;
+  height: 14px;
+}
+
 .auth-page .auth-footer {
   display: flex;
   flex-wrap: wrap;
