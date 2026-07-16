@@ -47,6 +47,7 @@ export type MonitorError = {
 export type MonitorOutcome<T> =
   | { type: "success"; data: T }
   | { type: "validation"; errors: MonitorError[] }
+  | { type: "not_found" }
   | { type: "unauthenticated" }
   | { type: "unavailable" }
   | { type: "timeout" }
@@ -187,6 +188,32 @@ export async function listMonitors(
         ? { type: "success", data: monitors }
         : { type: "unexpected_response" }
     }
+    if (response.status === 401) return { type: "unauthenticated" }
+    if (response.status === 503) return { type: "unavailable" }
+    return { type: "unexpected_response" }
+  } catch (error) {
+    return requestFailure(error)
+  }
+}
+
+export async function getMonitor(
+  monitorId: string,
+): Promise<MonitorOutcome<MonitorDto>> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/monitors/${encodeURIComponent(monitorId)}`, {
+      method: "GET",
+      credentials: "include",
+      cache: "no-store",
+      signal: AbortSignal.timeout(MONITOR_REQUEST_TIMEOUT_MS),
+    })
+
+    if (response.ok) {
+      const monitor = await readMonitor(response)
+      return monitor
+        ? { type: "success", data: monitor }
+        : { type: "unexpected_response" }
+    }
+    if (response.status === 404) return { type: "not_found" }
     if (response.status === 401) return { type: "unauthenticated" }
     if (response.status === 503) return { type: "unavailable" }
     return { type: "unexpected_response" }

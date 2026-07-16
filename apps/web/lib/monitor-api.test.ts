@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 
-import { createMonitor, listMonitors, type MonitorCreatePayload } from "@/lib/monitor-api"
+import { createMonitor, getMonitor, listMonitors, type MonitorCreatePayload } from "@/lib/monitor-api"
 
 
 const payload: MonitorCreatePayload = {
@@ -112,5 +112,31 @@ describe("listMonitors", () => {
       items: [{ id: "monitor-1" }], page: 1, page_size: 10, total: 1, pages: 1,
     }), { status: 200 })))
     await expect(listMonitors(1, 10)).resolves.toEqual({ type: "unexpected_response" })
+  })
+})
+
+describe("getMonitor", () => {
+  it("returns one owned monitor without caching", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(responseMonitor), { status: 200 }))
+    vi.stubGlobal("fetch", fetchMock)
+
+    await expect(getMonitor("monitor/one")).resolves.toEqual({
+      type: "success",
+      data: responseMonitor,
+    })
+    const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe("http://localhost:8000/monitors/monitor%2Fone")
+    expect(options.credentials).toBe("include")
+    expect(options.cache).toBe("no-store")
+  })
+
+  it.each([
+    [404, { type: "not_found" }],
+    [401, { type: "unauthenticated" }],
+    [503, { type: "unavailable" }],
+    [500, { type: "unexpected_response" }],
+  ])("maps detail status %s to a controlled outcome", async (status, expected) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status })))
+    await expect(getMonitor("monitor-1")).resolves.toEqual(expected)
   })
 })

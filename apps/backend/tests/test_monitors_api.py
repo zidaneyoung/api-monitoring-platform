@@ -387,3 +387,80 @@ def test_monitor_list_rejects_invalid_pagination(query: str) -> None:
         app.dependency_overrides.pop(require_authenticated_session, None)
 
     assert response.status_code == 422
+
+
+def test_monitor_details_requires_authentication() -> None:
+    _, _ = asyncio.run(reset_users_and_create_two())
+    app.dependency_overrides[get_database_session] = override_database_session
+    try:
+        with TestClient(app) as client:
+            response = client.get(f"/monitors/{uuid4()}")
+    finally:
+        app.dependency_overrides.pop(get_database_session, None)
+
+    assert response.status_code == 401
+
+
+def test_monitor_details_returns_owned_configuration_and_latest_state() -> None:
+    owner, _ = asyncio.run(reset_users_and_create_two())
+    monitor_ids = asyncio.run(
+        add_monitors(owner.id, ["Earlier monitor", "Owned details"], statuses=["unknown", "up"])
+    )
+    app.dependency_overrides[get_database_session] = override_database_session
+    app.dependency_overrides[require_authenticated_session] = authenticated_as(owner)
+    try:
+        with TestClient(app) as client:
+            response = client.get(f"/monitors/{monitor_ids[1]}")
+    finally:
+        app.dependency_overrides.pop(get_database_session, None)
+        app.dependency_overrides.pop(require_authenticated_session, None)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body == {
+        "id": str(monitor_ids[1]),
+        "name": "Owned details",
+        "url": "https://example.com/1",
+        "http_method": "HEAD",
+        "interval_seconds": 61,
+        "timeout_seconds": 10,
+        "expected_status_min": 200,
+        "expected_status_max": 399,
+        "failure_threshold": 3,
+        "recovery_threshold": 2,
+        "status": "up",
+        "next_check_at": body["next_check_at"],
+        "last_checked_at": body["last_checked_at"],
+        "latest_response_time_ms": 125,
+        "latest_status_code": 204,
+    }
+    assert body["next_check_at"] is not None
+    assert body["last_checked_at"] is not None
+    assert "user_id" not in body
+    assert "is_enabled" not in body
+    assert "consecutive_successes" not in body
+
+
+def test_foreign_and_missing_monitor_details_share_controlled_response() -> None:
+    owner, other = asyncio.run(reset_users_and_create_two())
+    foreign_id = asyncio.run(add_monitors(other.id, ["Foreign details"]))[0]
+    app.dependency_overrides[get_database_session] = override_database_session
+    app.dependency_overrides[require_authenticated_session] = authenticated_as(owner)
+    try:
+        with TestClient(app) as client:
+            foreign_response = client.get(f"/monitors/{foreign_id}")
+            missing_response = client.get(f"/monitors/{uuid4()}")
+    finally:
+        app.dependency_overrides.pop(get_database_session, None)
+        app.dependency_overrides.pop(require_authenticated_session, None)
+
+    expected = {
+        "detail": {
+            "code": "monitor_not_found",
+            "message": "Monitor not found.",
+        }
+    }
+    assert foreign_response.status_code == 404
+    assert missing_response.status_code == 404
+    assert foreign_response.json() == expected
+    assert missing_response.json() == expected

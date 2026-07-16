@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta, timezone
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
@@ -13,6 +13,16 @@ from app.schemas.monitor import MonitorCreate, MonitorListResponse, MonitorRespo
 
 
 router = APIRouter(prefix="/monitors", tags=["monitors"])
+
+
+def _monitor_not_found_error() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail={
+            "code": "monitor_not_found",
+            "message": "Monitor not found.",
+        },
+    )
 
 
 @router.get("", response_model=MonitorListResponse)
@@ -39,6 +49,31 @@ async def list_monitors(
         page_size=page_size,
         total=total or 0,
     )
+
+
+@router.get(
+    "/{monitor_id}",
+    response_model=MonitorResponse,
+    responses={
+        status.HTTP_401_UNAUTHORIZED: {"description": "Authentication required."},
+        status.HTTP_404_NOT_FOUND: {"description": "Monitor not found."},
+    },
+)
+async def get_monitor(
+    monitor_id: UUID,
+    authenticated: AuthenticatedSession = Depends(require_authenticated_session),
+    session: AsyncSession = Depends(get_database_session),
+) -> Monitor:
+    result = await session.execute(
+        select(Monitor).where(
+            Monitor.id == monitor_id,
+            Monitor.user_id == authenticated.user.id,
+        )
+    )
+    monitor = result.scalar_one_or_none()
+    if monitor is None:
+        raise _monitor_not_found_error()
+    return monitor
 
 
 @router.post(
