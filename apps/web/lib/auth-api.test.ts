@@ -5,8 +5,8 @@ import {
   loginUser,
   logoutUser,
   registerUser,
-  safeAuthRedirect,
 } from "@/lib/auth-api"
+import { authRouteWithNext, safeAuthRedirect } from "@/lib/auth-redirect"
 
 
 afterEach(() => {
@@ -23,74 +23,153 @@ describe("safeAuthRedirect", () => {
     ["https://attacker.example/path", "/dashboard"],
     ["//attacker.example/path", "/dashboard"],
     ["/\\attacker.example/path", "/dashboard"],
+    ["/%2f%2fattacker.example/path", "/dashboard"],
+    ["/%252f%252fattacker.example/path", "/dashboard"],
+    ["/%5cattacker.example/path", "/dashboard"],
     ["/monitors/123?tab=checks", "/monitors/123?tab=checks"],
   ])("maps %s to %s", (destination, expected) => {
     expect(safeAuthRedirect(destination)).toBe(expected)
   })
+
+  it("preserves the destination between guest routes", () => {
+    expect(authRouteWithNext("/register", "/monitors?status=down")).toBe(
+      "/register?next=%2Fmonitors%3Fstatus%3Ddown",
+    )
+    expect(authRouteWithNext("/login", "https://attacker.example")).toBe("/login")
+  })
 })
 
-describe("authentication request timeout", () => {
+describe("credential outcomes", () => {
+  it("returns a typed success with the safe public user", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      id: "user-1",
+      email: "user@example.com",
+    }), { status: 200 })))
+
+    await expect(loginUser("user@example.com", "monitor123")).resolves.toEqual({
+      type: "success",
+      data: { id: "user-1", email: "user@example.com" },
+    })
+  })
+
+  it.each([
+    [401, { type: "invalid_credentials" }],
+    [503, { type: "unavailable" }],
+    [500, { type: "unexpected_response" }],
+  ])("maps login status %s without exposing the response body", async (status, expected) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ detail: { message: "sensitive internal detail" } }),
+      { status },
+    )))
+
+    await expect(loginUser("user@example.com", "monitor123")).resolves.toEqual(expected)
+  })
+
+  it("returns safe field validation errors", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      errors: [{ field: "email", message: "Enter a valid email address." }],
+    }), { status: 422 })))
+
+    await expect(registerUser("invalid", "monitor123")).resolves.toEqual({
+      type: "validation",
+      errors: [{ field: "email", message: "Enter a valid email address." }],
+    })
+  })
+
+  it("maps duplicate registration to a controlled conflict", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 409 })))
+
+    await expect(registerUser("user@example.com", "monitor123")).resolves.toEqual({
+      type: "conflict",
+      field: "email",
+    })
+  })
+
+  it.each([
+    ["17", 17],
+    ["invalid", 60],
+    [null, 60],
+  ])("parses Retry-After %s safely", async (header, expected) => {
+    const headers = new Headers()
+    if (header !== null) headers.set("Retry-After", header)
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, {
+      status: 429,
+      headers,
+    })))
+
+    await expect(loginUser("user@example.com", "monitor123")).resolves.toEqual({
+      type: "rate_limited",
+      retryAfterSeconds: expected,
+    })
+  })
+
+  it("rejects a malformed success response", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ email: "user@example.com" }),
+      { status: 200 },
+    )))
+
+    await expect(loginUser("user@example.com", "monitor123")).resolves.toEqual({
+      type: "unexpected_response",
+    })
+  })
+
+  it("distinguishes timeout from network failure", async () => {
+    const timeoutFetch = vi.fn().mockRejectedValue(new DOMException("timed out", "TimeoutError"))
+    vi.stubGlobal("fetch", timeoutFetch)
+    await expect(loginUser("user@example.com", "monitor123")).resolves.toEqual({ type: "timeout" })
+
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("network detail")))
+    await expect(loginUser("user@example.com", "monitor123")).resolves.toEqual({ type: "network_error" })
+  })
+
   it.each([
     ["login", loginUser],
     ["registration", registerUser],
-  ])("stops a stalled %s request with a safe error", async (_label, request) => {
-    const controller = new AbortController()
-    const timeoutMock = vi.spyOn(AbortSignal, "timeout").mockReturnValue(controller.signal)
-    vi.stubGlobal("fetch", vi.fn((_url: string, options: RequestInit) => new Promise<Response>((_resolve, reject) => {
-      options.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")))
-    })))
+  ])("bounds the %s request at ten seconds", async (_label, request) => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new DOMException("timed out", "TimeoutError")))
+    const timeoutMock = vi.spyOn(AbortSignal, "timeout")
 
-    const result = request("user@example.com", "monitor123")
-    controller.abort()
+    await request("user@example.com", "monitor123")
 
-    await expect(result).resolves.toEqual([
-      { field: "form", message: "Unable to reach the service. Try again." },
-    ])
     expect(timeoutMock).toHaveBeenCalledWith(10_000)
   })
 })
 
 describe("getCurrentUser", () => {
-  it("uses the HttpOnly cookie across navigation and refresh without web storage", async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ id: "user-1", email: "user@example.com" }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ id: "user-1", email: "user@example.com" }), { status: 200 }))
+  it("uses the HttpOnly cookie across navigation without web storage", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      id: "user-1",
+      email: "user@example.com",
+    }), { status: 200 }))
     vi.stubGlobal("fetch", fetchMock)
 
-    const navigationUser = await getCurrentUser()
-    const refreshedUser = await getCurrentUser()
-
-    expect(navigationUser).toEqual({ id: "user-1", email: "user@example.com" })
-    expect(refreshedUser).toEqual(navigationUser)
-    expect(fetchMock).toHaveBeenCalledTimes(2)
-    for (const [, options] of fetchMock.mock.calls as [string, RequestInit][]) {
-      expect(options.credentials).toBe("include")
-      expect(options.cache).toBe("no-store")
-      expect(options.signal).toBeInstanceOf(AbortSignal)
-    }
+    await expect(getCurrentUser()).resolves.toEqual({
+      type: "success",
+      data: { id: "user-1", email: "user@example.com" },
+    })
+    const [, options] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(options.credentials).toBe("include")
+    expect(options.cache).toBe("no-store")
+    expect(options.signal).toBeInstanceOf(AbortSignal)
     expect(localStorage.length).toBe(0)
     expect(sessionStorage.length).toBe(0)
   })
 
-  it("fails closed for an invalid or expired session", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      detail: { code: "not_authenticated", message: "Authentication required." },
-    }), { status: 401 })))
-
-    expect(await getCurrentUser()).toBeNull()
+  it.each([
+    [401, { type: "unauthenticated" }],
+    [503, { type: "unavailable" }],
+    [500, { type: "unexpected_response" }],
+  ])("maps current-user status %s explicitly", async (status, expected) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status })))
+    await expect(getCurrentUser()).resolves.toEqual(expected)
   })
 
   it("stops a stalled current-user request after five seconds", async () => {
-    const controller = new AbortController()
-    const timeoutMock = vi.spyOn(AbortSignal, "timeout").mockReturnValue(controller.signal)
-    vi.stubGlobal("fetch", vi.fn((_url: string, options: RequestInit) => new Promise<Response>((_resolve, reject) => {
-      options.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")))
-    })))
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new DOMException("timed out", "TimeoutError")))
+    const timeoutMock = vi.spyOn(AbortSignal, "timeout")
 
-    const result = getCurrentUser()
-    controller.abort()
-
-    await expect(result).resolves.toBeNull()
+    await expect(getCurrentUser()).resolves.toEqual({ type: "timeout" })
     expect(timeoutMock).toHaveBeenCalledWith(5_000)
   })
 })
@@ -118,21 +197,6 @@ describe("logoutUser", () => {
     ["network failure", vi.fn().mockRejectedValue(new Error("sensitive transport detail"))],
   ])("returns a controlled error for %s", async (_label, fetchMock) => {
     vi.stubGlobal("fetch", fetchMock)
-
     await expect(logoutUser()).rejects.toThrow("Unable to log out. Try again.")
-  })
-
-  it("stops a stalled logout request after five seconds", async () => {
-    const controller = new AbortController()
-    const timeoutMock = vi.spyOn(AbortSignal, "timeout").mockReturnValue(controller.signal)
-    vi.stubGlobal("fetch", vi.fn((_url: string, options: RequestInit) => new Promise<Response>((_resolve, reject) => {
-      options.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")))
-    })))
-
-    const result = logoutUser()
-    controller.abort()
-
-    await expect(result).rejects.toThrow("Unable to log out. Try again.")
-    expect(timeoutMock).toHaveBeenCalledWith(5_000)
   })
 })

@@ -10,13 +10,25 @@ import {
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { FormEvent } from "react";
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 
 import { ThemeToggle } from "@/components/theme-toggle";
+import type { AuthOutcome, CurrentUser } from "@/lib/auth-api";
 import { loginUser, registerUser } from "@/lib/auth-api";
+import { authRouteWithNext } from "@/lib/auth-redirect";
 
 type Mode = "login" | "register";
 type Tone = "idle" | "loading" | "success" | "error";
+type AuthCopy = {
+  title: string;
+  description: string;
+  submit: string;
+  success: string;
+  statusIntro: string;
+  alternateLabel: string;
+  alternateHref: "/login" | "/register";
+  alternateText: string;
+};
 
 const COPY = {
   login: {
@@ -39,7 +51,7 @@ const COPY = {
     alternateHref: "/login",
     alternateText: "Log in",
   },
-} satisfies Record<Mode, Record<string, string>>;
+} satisfies Record<Mode, AuthCopy>;
 
 function validateEmail(value: string) {
   if (!value.trim()) return "Email is required.";
@@ -51,6 +63,15 @@ function validatePassword(value: string) {
   if (!value) return "Password is required.";
   if (value.length < 8) return "Password must be at least 8 characters.";
   return "";
+}
+
+function retryMessage(retryAt: number, seconds: number) {
+  const time = new Date(retryAt).toLocaleTimeString([], {
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+  return `Too many attempts. Try again after ${time} (${seconds}s).`;
 }
 
 function PasswordToggle({
@@ -100,6 +121,29 @@ export function AuthForm({
   const [tone, setTone] = useState<Tone>("idle");
   const [submitAttempted, setSubmitAttempted] = useState(false);
   const [serverErrors, setServerErrors] = useState({ email: "", password: "" });
+  const [retryAt, setRetryAt] = useState<number | null>(null);
+  const [retrySeconds, setRetrySeconds] = useState(0);
+
+  useEffect(() => {
+    if (retryAt === null) return;
+    const deadline = retryAt;
+
+    function updateCountdown() {
+      const seconds = Math.max(0, Math.ceil((deadline - Date.now()) / 1_000));
+      setRetrySeconds(seconds);
+      if (seconds === 0) {
+        setRetryAt(null);
+        setTone("idle");
+        setStatus("You can try again now.");
+      } else {
+        setStatus(retryMessage(deadline, seconds));
+      }
+    }
+
+    updateCountdown();
+    const interval = window.setInterval(updateCountdown, 1_000);
+    return () => window.clearInterval(interval);
+  }, [retryAt]);
 
   const shouldValidate = (field: keyof typeof touched) => touched[field] || submitAttempted;
   const emailError = serverErrors.email || (shouldValidate("email") ? validateEmail(email) : "");
@@ -116,8 +160,59 @@ export function AuthForm({
     email.trim() && password && (!isRegister || confirmPassword),
   );
 
+  function applyFailure(outcome: Exclude<AuthOutcome<CurrentUser>, { type: "success" }>) {
+    setIsSubmitting(false);
+    setTone("error");
+
+    switch (outcome.type) {
+      case "validation":
+        setServerErrors({
+          email: outcome.errors.find((error) => error.field === "email")?.message ?? "",
+          password: outcome.errors.find((error) => error.field === "password")?.message ?? "",
+        });
+        setStatus(
+          outcome.errors.find((error) => error.field === "form")?.message
+          ?? "Fix the highlighted fields and try again.",
+        );
+        return;
+      case "invalid_credentials":
+        setStatus("Invalid email or password.");
+        return;
+      case "conflict":
+        setServerErrors((current) => ({
+          ...current,
+          email: "An account with this email already exists.",
+        }));
+        setStatus("Fix the highlighted fields and try again.");
+        return;
+      case "rate_limited": {
+        const deadline = Date.now() + outcome.retryAfterSeconds * 1_000;
+        setRetrySeconds(outcome.retryAfterSeconds);
+        setRetryAt(deadline);
+        setStatus(retryMessage(deadline, outcome.retryAfterSeconds));
+        return;
+      }
+      case "unavailable":
+        setStatus("Authentication is temporarily unavailable. Try again.");
+        return;
+      case "timeout":
+        setStatus("The request timed out. Try again.");
+        return;
+      case "network_error":
+        setStatus("Unable to reach the service. Check your connection and try again.");
+        return;
+      case "unauthenticated":
+        setStatus("Your session expired. Log in again.");
+        return;
+      case "unexpected_response":
+        setStatus("Unable to complete the request. Try again.");
+        return;
+    }
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (isSubmitting || retrySeconds > 0) return;
     setSubmitAttempted(true);
     setServerErrors({ email: "", password: "" });
 
@@ -138,41 +233,16 @@ export function AuthForm({
     setTone("loading");
     setStatus(isRegister ? "Creating account…" : "Signing in…");
 
-    if (isRegister) {
-      const errors = await registerUser(email, password);
+    const outcome = isRegister
+      ? await registerUser(email, password)
+      : await loginUser(email, password);
 
-      if (errors.length > 0) {
-        setIsSubmitting(false);
-        setServerErrors({
-          email: errors.find((error) => error.field === "email")?.message ?? "",
-          password: errors.find((error) => error.field === "password")?.message ?? "",
-        });
-        setTone("error");
-        setStatus(errors.find((error) => error.field === "form")?.message ?? "Fix the highlighted fields and try again.");
-        return;
-      }
-
-      setIsSubmitting(false);
-      setTone("success");
-      setStatus(copy.success);
-      router.replace(redirectTo);
-      router.refresh();
+    if (outcome.type !== "success") {
+      applyFailure(outcome);
       return;
     }
 
-    const errors = await loginUser(email, password);
     setIsSubmitting(false);
-
-    if (errors.length > 0) {
-      setServerErrors({
-        email: errors.find((error) => error.field === "email")?.message ?? "",
-        password: errors.find((error) => error.field === "password")?.message ?? "",
-      });
-      setTone("error");
-      setStatus(errors.find((error) => error.field === "form")?.message ?? "Fix the highlighted fields and try again.");
-      return;
-    }
-
     setTone("success");
     setStatus(copy.success);
     router.replace(redirectTo);
@@ -277,15 +347,27 @@ export function AuthForm({
             </div>
           ) : null}
 
-          <button className="auth-submit" type="submit" disabled={isSubmitting || !readyToSubmit}>
-            <span>{isSubmitting ? "Working…" : copy.submit}</span>
+          <button
+            className="auth-submit"
+            type="submit"
+            disabled={isSubmitting || retrySeconds > 0 || !readyToSubmit}
+          >
+            <span>
+              {isSubmitting
+                ? "Working…"
+                : retrySeconds > 0
+                  ? `Try again in ${retrySeconds}s`
+                  : copy.submit}
+            </span>
             <ArrowRight aria-hidden="true" />
           </button>
         </form>
 
         <footer className="auth-footer">
           <span>{copy.alternateLabel}</span>
-          <Link href={copy.alternateHref}>{copy.alternateText}</Link>
+          <Link href={authRouteWithNext(copy.alternateHref, redirectTo)}>
+            {copy.alternateText}
+          </Link>
         </footer>
       </section>
     </main>
