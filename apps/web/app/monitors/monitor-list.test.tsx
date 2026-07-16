@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react"
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { MonitorList } from "./monitor-list"
@@ -104,7 +104,6 @@ describe("MonitorList", () => {
   })
 
   it("confirms deletion and removes the monitor from the active list", async () => {
-    vi.stubGlobal("confirm", vi.fn(() => true))
     fetchMock
       .mockResolvedValueOnce(responsePage({ items: [unknownMonitor], total: 1 }))
       .mockResolvedValueOnce(new Response(null, { status: 204 }))
@@ -113,6 +112,7 @@ describe("MonitorList", () => {
     expect((await screen.findAllByText("Owner unknown API")).length).toBeGreaterThan(0)
     fireEvent.click(screen.getAllByRole("button", { name: "Actions for Owner unknown API" })[0])
     fireEvent.click(await screen.findByRole("button", { name: "Delete monitor" }))
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Permanently delete Owner unknown API?" })).getByRole("button", { name: "Delete permanently" }))
     expect(await screen.findByText("No monitors yet")).toBeTruthy()
     expect(screen.queryByText("Owner unknown API")).toBeNull()
     expect(fetchMock.mock.calls[1]?.[0]).toBe("http://localhost:8000/monitors/monitor-unknown")

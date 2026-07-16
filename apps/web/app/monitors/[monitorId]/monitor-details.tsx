@@ -10,7 +10,7 @@ import { Button, buttonVariants } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { getMonitor, type MonitorDto } from "@/lib/monitor-api"
 import { MonitorDeleteButton } from "../monitor-delete-button"
-import { MonitorStateButton } from "../monitor-pause-button"
+import { MonitorStateButton, type MonitorMutationAction } from "../monitor-pause-button"
 
 
 type DetailsState =
@@ -87,6 +87,7 @@ function DetailsContent({
   onMonitorChange: (monitor: MonitorDto) => void
   onDeleted: (monitorId: string) => void
 }) {
+  const [pendingMutation, setPendingMutation] = useState<MonitorMutationAction | null>(null)
   const configuration = [
     ["HTTP method", monitor.http_method],
     ["Interval", formatDuration(monitor.interval_seconds)],
@@ -102,8 +103,20 @@ function DetailsContent({
         <div className="min-w-0"><div className="flex flex-wrap items-center gap-4"><h1 className="text-[2.25rem] font-semibold tracking-[-0.045em] sm:text-[2.45rem]">{monitor.name}</h1><StatusBadge status={monitor.status} className="px-3 py-1 text-base" /></div><a className="mt-1 block break-all text-base font-semibold text-link hover:underline" href={monitor.url}>{monitor.url}</a></div>
         <div className="flex flex-wrap items-center gap-3">
           <Link className={buttonVariants({ variant: "outline", size: "lg", className: "h-10 px-4" })} href={`/monitors/${monitor.id}/edit`}><PencilIcon data-icon="inline-start" />Edit</Link>
-          <MonitorStateButton className="h-10 px-4" monitor={monitor} onChanged={onMonitorChange} />
-          <MonitorDeleteButton className="h-10 px-4" monitor={monitor} onDeleted={onDeleted} />
+          <MonitorStateButton
+            className="h-10 px-4"
+            monitor={monitor}
+            pendingAction={pendingMutation}
+            onPendingActionChange={setPendingMutation}
+            onChanged={onMonitorChange}
+          />
+          <MonitorDeleteButton
+            className="h-10 px-4"
+            monitor={monitor}
+            pendingAction={pendingMutation}
+            onPendingActionChange={setPendingMutation}
+            onDeleted={onDeleted}
+          />
         </div>
       </header>
 
