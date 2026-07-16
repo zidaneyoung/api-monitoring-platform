@@ -3,6 +3,16 @@
 Authentication uses server-side, opaque sessions instead of browser-readable access
 tokens.
 
+## Registration
+
+`POST /auth/register` creates the account and its initial session in one request.
+The user is flushed inside the database transaction so a Redis session can be
+created for the new ID before commit. A Redis failure rolls back the user. A
+database commit failure triggers best-effort Redis cleanup. The browser receives
+the cookie only after the database commit succeeds, and the response contains only
+the public user ID and normalized email. The registration form never submits the
+password to the login endpoint.
+
 ## Lifecycle
 
 1. Successful login creates a cryptographically random session token.
@@ -31,6 +41,40 @@ Next.js Proxy verifies the backend session before dashboard, monitor, or inciden
 routes render. Unauthenticated requests are redirected to login with their intended
 path and query in the `next` parameter. The backend remains the authorization
 boundary for every protected data operation.
+
+Only relative, same-application destinations are preserved. Absolute URLs,
+scheme-relative URLs, backslashes, control characters, and encoded external
+redirects fall back to `/dashboard`. Login and registration carry the same safe
+destination between forms and use replacement navigation after success.
+
+The frontend distinguishes a confirmed missing, invalid, revoked, expired, or
+disabled-user session from an authentication dependency failure. A confirmed
+unauthenticated result clears the cookie and redirects to login. Database, Redis,
+network, and timeout failures preserve the cookie, keep protected content hidden,
+and show `/auth-unavailable` with a retry action. Guest-route verification follows
+the same rules and excludes the unavailable route from matching to prevent loops.
+
+The authenticated application shell calls `GET /auth/me` once when it mounts,
+retains that public user across protected client navigation, and displays the email
+and initials derived from its local part. It renders a neutral skeleton until the
+real account resolves. Logout is a separate bounded action: a confirmed `204`, an
+already-unauthenticated response, or the backend's controlled cookie-clearing
+response navigates to login; an unconfirmed timeout or network failure leaves the
+user in place so the action can be retried.
+
+## Frontend request deadlines
+
+| Request | Deadline |
+| --- | ---: |
+| Registration | 10 seconds |
+| Login | 10 seconds |
+| Current user | 5 seconds |
+| Logout | 5 seconds |
+| Proxy route verification | 5 seconds |
+
+Every deadline settles with a typed, safe outcome. Forms and logout controls stop
+loading and become usable again when completion is not confirmed. Raw response
+bodies and transport exceptions are never displayed.
 
 ## Authentication rate limits
 

@@ -37,12 +37,20 @@ describe("AuthForm", () => {
     const toggle = screen.getByRole("button", { name: "Show password" })
 
     expect(submit.disabled).toBe(true)
+    expect(email.getAttribute("autocapitalize")).toBe("none")
+    expect(email.getAttribute("spellcheck")).toBe("false")
+    expect(password.maxLength).toBe(128)
     fireEvent.change(email, { target: { value: "invalid" } })
     fireEvent.blur(email)
-    expect(screen.getByRole("alert").textContent).toContain("valid email")
+    const emailAlert = screen.getByText("Enter a valid email address.")
+    expect(emailAlert.textContent).toContain("valid email")
+    expect(email.getAttribute("aria-invalid")).toBe("true")
+    expect(email.getAttribute("aria-describedby")).toBe(emailAlert.id)
 
     fireEvent.change(password, { target: { value: "monitor123" } })
     expect(submit.disabled).toBe(false)
+    fireEvent.click(submit)
+    expect(document.activeElement).toBe(email)
     fireEvent.click(toggle)
     expect(password.type).toBe("text")
     expect(toggle.getAttribute("aria-pressed")).toBe("true")
@@ -64,6 +72,8 @@ describe("AuthForm", () => {
 
     expect(screen.getByRole("button", { name: "Working…" }).getAttribute("disabled")).not.toBeNull()
     expect(screen.getByText("Signing in…")).toBeTruthy()
+    fireEvent.click(screen.getByRole("button", { name: "Working…" }))
+    expect(fetchMock).toHaveBeenCalledOnce()
 
     await act(async () => completeRequest(new Response(JSON.stringify({
       id: "user-1",
@@ -91,7 +101,8 @@ describe("AuthForm", () => {
     fireEvent.change(screen.getByLabelText("Password"), { target: { value: "wrong-password" } })
     fireEvent.click(screen.getByRole("button", { name: "Log in" }))
 
-    expect(await screen.findByText("Invalid email or password.")).toBeTruthy()
+    const alert = await screen.findByText("Invalid email or password.")
+    expect(document.activeElement).toBe(alert)
     expect(navigationMock.replace).not.toHaveBeenCalled()
   })
 
@@ -148,6 +159,9 @@ describe("AuthForm", () => {
     fireEvent.click(screen.getByRole("button", { name: "Create account" }))
 
     expect(await screen.findByText("Unable to reach the service. Check your connection and try again.")).toBeTruthy()
+    expect((screen.getByLabelText("Email address") as HTMLInputElement).value).toBe("jane@example.com")
+    expect((screen.getByLabelText("Password") as HTMLInputElement).value).toBe("monitor123")
+    expect((screen.getByLabelText("Confirm password") as HTMLInputElement).value).toBe("monitor123")
     expect(screen.getByRole("button", { name: "Create account" }).getAttribute("disabled")).toBeNull()
     expect(navigationMock.replace).not.toHaveBeenCalled()
   })
@@ -165,6 +179,9 @@ describe("AuthForm", () => {
 
     expect(await screen.findByText("An account with this email already exists.")).toBeTruthy()
     expect(screen.getByText("Fix the highlighted fields and try again.")).toBeTruthy()
+    expect(document.activeElement).toBe(screen.getByLabelText("Email address"))
+    fireEvent.change(screen.getByLabelText("Email address"), { target: { value: "new@example.com" } })
+    expect(screen.queryByText("An account with this email already exists.")).toBeNull()
   })
 
   it("distinguishes service unavailability from invalid credentials", async () => {

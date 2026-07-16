@@ -1,10 +1,10 @@
 "use client"
 
 import Link from "next/link"
-import { usePathname } from "next/navigation"
+import { usePathname, useRouter } from "next/navigation"
+import { useEffect, useState } from "react"
 import {
   BellIcon,
-  ChevronDownIcon,
   CircleHelpIcon,
   LayoutDashboardIcon,
   MailIcon,
@@ -16,6 +16,8 @@ import {
 import { ThemeToggle } from "@/components/theme-toggle"
 import { LogoutButton } from "@/components/logout-button"
 import { Button, buttonVariants } from "@/components/ui/button"
+import { getCurrentUser, type CurrentUser } from "@/lib/auth-api"
+import { authRouteWithNext, safeAuthRedirect } from "@/lib/auth-redirect"
 import { cn } from "@/lib/utils"
 
 const navigationItems = [
@@ -106,7 +108,23 @@ function SupportNavigation() {
   )
 }
 
-function ApplicationHeader({ pathname }: { pathname: string }) {
+function initialsFromEmail(email: string): string {
+  const localPart = email.split("@", 1)[0] ?? ""
+  const segments = localPart.split(/[._-]+/).filter(Boolean)
+  const initials = segments.length > 1
+    ? segments.slice(0, 2).map((segment) => segment[0]).join("")
+    : localPart.replace(/[^a-z0-9]/gi, "").slice(0, 2)
+
+  return (initials || "U").toUpperCase()
+}
+
+function ApplicationHeader({
+  pathname,
+  user,
+}: {
+  pathname: string
+  user?: CurrentUser
+}) {
   const isMonitorList = pathname === "/monitors"
   const isIncidentHistory = pathname === "/monitors/incidents"
 
@@ -121,28 +139,36 @@ function ApplicationHeader({ pathname }: { pathname: string }) {
           <BellIcon className="size-6" strokeWidth={1.7} />
           <span className="absolute top-2.5 right-2.5 size-2.5 rounded-full border-2 border-background bg-primary" aria-hidden="true" />
         </Button>
-        <LogoutButton
-          className={cn(buttonVariants({ variant: "ghost", size: "lg" }), "h-12 gap-3 px-1.5 sm:px-2")}
-        >
-          <span className="grid size-11 place-items-center rounded-full bg-primary/10 text-sm font-semibold text-primary">ZY</span>
-          <span className="hidden text-base font-medium md:block">Zidane Young</span>
-          <ChevronDownIcon className="hidden size-4 text-muted-foreground md:block" aria-hidden="true" />
-        </LogoutButton>
+        {user ? (
+          <div className="flex min-w-0 items-center gap-2.5" aria-label={`Signed in as ${user.email}`}>
+            <span className="grid size-10 shrink-0 place-items-center rounded-full bg-primary/10 text-sm font-semibold text-primary">
+              {initialsFromEmail(user.email)}
+            </span>
+            <span className="hidden max-w-40 truncate text-sm font-medium md:block xl:max-w-64" title={user.email}>
+              {user.email}
+            </span>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2.5" role="status" aria-label="Loading account">
+            <span className="size-10 animate-pulse rounded-full bg-muted motion-reduce:animate-none" />
+            <span className="hidden h-4 w-32 animate-pulse rounded bg-muted motion-reduce:animate-none md:block" />
+          </div>
+        )}
+        <LogoutButton className={cn(buttonVariants({ variant: "ghost", size: "lg" }), "h-11 px-2.5 sm:px-3")} />
       </div>
     </header>
   )
 }
 
-export function AppShell({ children }: { children: React.ReactNode }) {
-  const pathname = usePathname()
-  const isStandalonePage = (
-    pathname === "/login"
-    || pathname === "/register"
-    || pathname === "/auth-unavailable"
-  )
-
-  if (isStandalonePage) return children
-
+function ApplicationFrame({
+  children,
+  pathname,
+  user,
+}: {
+  children: React.ReactNode
+  pathname: string
+  user?: CurrentUser
+}) {
   return (
     <div className="min-h-svh bg-background lg:grid lg:grid-cols-[14.75rem_minmax(0,1fr)] xl:grid-cols-[17.25rem_minmax(0,1fr)]">
       <aside className="sticky top-0 hidden h-svh flex-col border-r border-sidebar-border bg-sidebar px-3.5 py-8 text-sidebar-foreground lg:flex xl:px-5 xl:py-11">
@@ -156,9 +182,73 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <div className="mb-4"><Brand /></div>
           <ApplicationNavigation mobile />
         </div>
-        <ApplicationHeader pathname={pathname} />
+        <ApplicationHeader pathname={pathname} user={user} />
         {children}
       </div>
     </div>
   )
+}
+
+function AuthenticatedShell({
+  children,
+  pathname,
+}: {
+  children: React.ReactNode
+  pathname: string
+}) {
+  const router = useRouter()
+  const [intendedDestination] = useState(pathname)
+  const [user, setUser] = useState<CurrentUser | null>(null)
+
+  useEffect(() => {
+    let active = true
+
+    void getCurrentUser().then((outcome) => {
+      if (!active) return
+
+      if (outcome.type === "success") {
+        setUser(outcome.data)
+        return
+      }
+
+      if (outcome.type === "unauthenticated") {
+        router.replace(authRouteWithNext("/login", intendedDestination))
+        return
+      }
+
+      const destination = safeAuthRedirect(intendedDestination)
+      router.replace(`/auth-unavailable?next=${encodeURIComponent(destination)}`)
+    })
+
+    return () => {
+      active = false
+    }
+  }, [intendedDestination, router])
+
+  return (
+    <ApplicationFrame pathname={pathname} user={user ?? undefined}>
+      {user ? children : (
+        <section className="grid min-h-[45vh] place-items-center px-6" aria-live="polite" aria-busy="true">
+          <div className="w-full max-w-md space-y-4" role="status">
+            <span className="sr-only">Checking your session…</span>
+            <div className="h-7 w-44 animate-pulse rounded bg-muted motion-reduce:animate-none" />
+            <div className="h-28 animate-pulse rounded-xl bg-muted/70 motion-reduce:animate-none" />
+          </div>
+        </section>
+      )}
+    </ApplicationFrame>
+  )
+}
+
+export function AppShell({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname()
+  const isStandalonePage = (
+    pathname === "/login"
+    || pathname === "/register"
+    || pathname === "/auth-unavailable"
+  )
+
+  if (isStandalonePage) return children
+
+  return <AuthenticatedShell pathname={pathname}>{children}</AuthenticatedShell>
 }
