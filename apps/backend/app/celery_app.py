@@ -1,6 +1,9 @@
 import os
+import asyncio
 
 from celery import Celery
+
+from app.config import load_settings
 
 
 def _redis_url() -> str:
@@ -18,7 +21,12 @@ celery_app = Celery(
 
 celery_app.conf.update(
     broker_connection_retry_on_startup=True,
-    beat_schedule={},
+    beat_schedule={
+        "dispatch-due-monitors": {
+            "task": "app.monitoring.scheduler.dispatch_due_monitors_task",
+            "schedule": load_settings().scheduler_dispatch_interval_seconds,
+        },
+    },
     timezone="UTC",
 )
 
@@ -26,3 +34,20 @@ celery_app.conf.update(
 @celery_app.task(name="app.tasks.noop")
 def noop() -> str:
     return "ok"
+
+
+@celery_app.task(name="app.monitoring.scheduler.dispatch_due_monitors_task")
+def dispatch_due_monitors_task() -> dict[str, int]:
+    """Run one scheduler cycle without executing any monitor request."""
+
+    from app.database import dispose_database_engine
+    from app.monitoring.scheduler import dispatch_due_monitors
+
+    async def run_cycle() -> dict[str, int]:
+        try:
+            result = await dispatch_due_monitors()
+            return {"scheduled": result.scheduled, "enqueued": result.enqueued}
+        finally:
+            await dispose_database_engine()
+
+    return asyncio.run(run_cycle())

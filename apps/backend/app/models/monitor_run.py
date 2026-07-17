@@ -6,6 +6,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     Text,
     UniqueConstraint,
@@ -35,6 +36,11 @@ class MonitorRun(Base):
         CheckConstraint(
             "attempt_count >= 0", name="ck_monitor_runs_attempt_count_nonnegative"
         ),
+        Index(
+            "ix_monitor_runs_pending_dispatch",
+            "enqueued_at",
+            postgresql_where=text("status = 'queued' AND enqueued_at IS NULL"),
+        ),
         CheckConstraint(
             "started_at IS NULL OR claimed_at IS NULL OR started_at >= claimed_at",
             name="ck_monitor_runs_claimed_started_order",
@@ -60,6 +66,7 @@ class MonitorRun(Base):
     status: Mapped[str] = mapped_column(
         Text, nullable=False, default="queued", server_default=text("'queued'")
     )
+    enqueued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
