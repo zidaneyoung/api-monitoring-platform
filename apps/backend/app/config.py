@@ -32,6 +32,7 @@ class Settings:
     redis_db: int
     redis_url: str
     scheduler_dispatch_interval_seconds: int
+    monitor_max_response_bytes: int
 
 
 def _positive_int(name: str, default: str) -> int:
@@ -86,6 +87,10 @@ def load_settings() -> Settings:
     scheduler_dispatch_interval_seconds = _positive_int(
         "SCHEDULER_DISPATCH_INTERVAL_SECONDS",
         "30",
+    )
+    monitor_max_response_bytes = _positive_int(
+        "MONITOR_MAX_RESPONSE_BYTES",
+        "1048576",
     )
 
     session_cookie_secure = environment.lower() == "production" or _boolean(
@@ -157,4 +162,5 @@ def load_settings() -> Settings:
         redis_db=redis_db,
         redis_url=redis_url,
         scheduler_dispatch_interval_seconds=scheduler_dispatch_interval_seconds,
+        monitor_max_response_bytes=monitor_max_response_bytes,
     )
