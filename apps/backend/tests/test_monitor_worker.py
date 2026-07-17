@@ -140,7 +140,7 @@ def test_worker_processes_run_with_current_method_timeout_and_validation(
             assert checks[0].run_id == run.id
             assert checks[0].response_time_ms is not None
             assert checks[0].response_time_ms >= 0
-            assert checks[0].http_status_code is None
+            assert checks[0].http_status_code == 204
         finally:
             await engine.dispose()
 
@@ -312,6 +312,58 @@ def test_worker_records_monotonic_response_times_for_success_and_failure() -> No
     asyncio.run(scenario())
 
 
+def test_worker_records_healthy_and_unhealthy_response_statuses() -> None:
+    async def scenario() -> None:
+        engine, sessions = await create_session_factory()
+        try:
+            await reset_database(sessions)
+            healthy_monitor, healthy_run = await create_monitor_run(
+                sessions,
+                email="status-healthy@example.com",
+            )
+            unhealthy_monitor, unhealthy_run = await create_monitor_run(
+                sessions,
+                email="status-unhealthy@example.com",
+                url="https://status-unhealthy.example/health",
+            )
+
+            async def handler(request: httpx.Request) -> httpx.Response:
+                return httpx.Response(
+                    503 if request.url.host == "status-unhealthy.example" else 204,
+                    content=b"ok",
+                )
+
+            await execute_monitor_run(
+                healthy_run.id,
+                session_factory=sessions,
+                destination_resolver=public_resolver,
+                client_factory=client_factory(httpx.MockTransport(handler), []),
+            )
+            await execute_monitor_run(
+                unhealthy_run.id,
+                session_factory=sessions,
+                destination_resolver=public_resolver,
+                client_factory=client_factory(httpx.MockTransport(handler), []),
+            )
+            async with sessions() as session:
+                healthy_check = await session.scalar(
+                    select(MonitorCheck).where(MonitorCheck.run_id == healthy_run.id)
+                )
+                unhealthy_check = await session.scalar(
+                    select(MonitorCheck).where(MonitorCheck.run_id == unhealthy_run.id)
+                )
+                refreshed_healthy = await session.get(Monitor, healthy_monitor.id)
+                refreshed_unhealthy = await session.get(Monitor, unhealthy_monitor.id)
+            assert healthy_check is not None and healthy_check.http_status_code == 204
+            assert unhealthy_check is not None and unhealthy_check.http_status_code == 503
+            assert refreshed_healthy is not None and refreshed_healthy.latest_status_code == 204
+            assert refreshed_unhealthy is not None and refreshed_unhealthy.latest_status_code == 503
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
 def test_worker_records_null_response_time_when_request_never_starts() -> None:
     async def scenario() -> None:
         engine, sessions = await create_session_factory()
@@ -337,8 +389,10 @@ def test_worker_records_null_response_time_when_request_never_starts() -> None:
                 refreshed_monitor = await session.get(Monitor, monitor.id)
             assert check is not None
             assert check.response_time_ms is None
+            assert check.http_status_code is None
             assert refreshed_monitor is not None
             assert refreshed_monitor.latest_response_time_ms is None
+            assert refreshed_monitor.latest_status_code is None
         finally:
             await engine.dispose()
 
