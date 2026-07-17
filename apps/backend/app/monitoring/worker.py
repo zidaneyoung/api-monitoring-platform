@@ -2,6 +2,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import logging
+import time
 from uuid import UUID
 
 import httpx
@@ -24,6 +25,7 @@ from app.security.monitor_destinations import (
 logger = logging.getLogger(__name__)
 
 ClientFactory = Callable[[float], httpx.AsyncClient]
+Clock = Callable[[], float]
 
 
 @dataclass(frozen=True)
@@ -42,6 +44,15 @@ class MonitorRequest:
 
 class ResponseLimitError(RuntimeError):
     """The response body exceeded the configured safe read limit."""
+
+
+class RequestAttemptError(RuntimeError):
+    """A request error with its meaningful monotonic elapsed duration."""
+
+    def __init__(self, cause: Exception, response_time_ms: int) -> None:
+        super().__init__()
+        self.cause = cause
+        self.response_time_ms = response_time_ms
 
 
 def create_http_client(timeout_seconds: float) -> httpx.AsyncClient:
@@ -162,20 +173,30 @@ async def _perform_request(
     destination_resolver: DestinationResolver,
     client_factory: ClientFactory,
     max_response_bytes: int,
-) -> None:
+    clock: Clock,
+) -> int:
     destination = await validate_before_connection(request.url, destination_resolver)
     async with client_factory(request.timeout_seconds) as client:
-        async with client.stream(request.http_method, destination.url) as response:
-            await _read_response_with_limit(
-                response,
-                max_response_bytes=max_response_bytes,
-            )
+        request_started = clock()
+        try:
+            async with client.stream(request.http_method, destination.url) as response:
+                await _read_response_with_limit(
+                    response,
+                    max_response_bytes=max_response_bytes,
+                )
+        except Exception as error:
+            raise RequestAttemptError(
+                error,
+                max(0, round((clock() - request_started) * 1000)),
+            ) from error
+        return max(0, round((clock() - request_started) * 1000))
 
 
 async def _complete_run(
     run_id: UUID,
     *,
     started_at: datetime,
+    response_time_ms: int | None,
     error_category: str | None,
     error_message: str | None,
     session_factory: async_sessionmaker[AsyncSession],
@@ -202,11 +223,13 @@ async def _complete_run(
                         started_at=started_at,
                         completed_at=completed_at,
                         success=False,
+                        response_time_ms=response_time_ms,
                         error_category=error_category,
                         error_message=error_message,
                     )
                 )
                 monitor.last_checked_at = completed_at
+                monitor.latest_response_time_ms = response_time_ms
                 run.status = "completed"
                 run.completed_at = completed_at
                 return MonitorExecutionResult("completed", True)
@@ -222,6 +245,7 @@ async def execute_monitor_run(
     destination_resolver: DestinationResolver | None = None,
     client_factory: ClientFactory = create_http_client,
     max_response_bytes: int | None = None,
+    clock: Clock = time.perf_counter,
 ) -> MonitorExecutionResult:
     """Execute one queued monitor run and persist a safe, bounded check record."""
 
@@ -243,23 +267,35 @@ async def execute_monitor_run(
         return request_or_result
 
     started_at = datetime.now(timezone.utc)
+    response_time_ms: int | None = None
     try:
-        await _perform_request(
+        response_time_ms = await _perform_request(
             request_or_result,
             destination_resolver=destination_resolver or get_destination_resolver(),
             client_factory=client_factory,
             max_response_bytes=max_response_bytes
             if max_response_bytes is not None
             else load_settings().monitor_max_response_bytes,
+            clock=clock,
         )
     except DestinationSecurityError:
         logger.warning("monitor_worker_destination_rejected")
         error_category = "unsafe_destination"
         error_message = "Monitor destination could not be reached safely."
-    except ResponseLimitError:
-        logger.warning("monitor_worker_response_limit_exceeded")
-        error_category = "response_limit"
-        error_message = "Monitor response exceeded the safe size limit."
+    except RequestAttemptError as error:
+        response_time_ms = error.response_time_ms
+        if isinstance(error.cause, ResponseLimitError):
+            logger.warning("monitor_worker_response_limit_exceeded")
+            error_category = "response_limit"
+            error_message = "Monitor response exceeded the safe size limit."
+        elif isinstance(error.cause, httpx.HTTPError):
+            logger.warning("monitor_worker_request_failed")
+            error_category = "request_failed"
+            error_message = "Monitor request failed."
+        else:
+            logger.warning("monitor_worker_internal_failure")
+            error_category = "internal_error"
+            error_message = "Monitor execution failed."
     except httpx.HTTPError:
         logger.warning("monitor_worker_request_failed")
         error_category = "request_failed"
@@ -275,6 +311,7 @@ async def execute_monitor_run(
     return await _complete_run(
         parsed_run_id,
         started_at=started_at,
+        response_time_ms=response_time_ms,
         error_category=error_category,
         error_message=error_message,
         session_factory=session_factory,

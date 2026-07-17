@@ -138,7 +138,8 @@ def test_worker_processes_run_with_current_method_timeout_and_validation(
             assert len(checks) == 1
             assert checks[0].monitor_id == monitor.id
             assert checks[0].run_id == run.id
-            assert checks[0].response_time_ms is None
+            assert checks[0].response_time_ms is not None
+            assert checks[0].response_time_ms >= 0
             assert checks[0].http_status_code is None
         finally:
             await engine.dispose()
@@ -240,6 +241,104 @@ def test_worker_bounds_response_reading_and_records_safe_failure() -> None:
             assert check is not None
             assert check.error_category == "response_limit"
             assert check.error_message == "Monitor response exceeded the safe size limit."
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_worker_records_monotonic_response_times_for_success_and_failure() -> None:
+    async def scenario() -> None:
+        engine, sessions = await create_session_factory()
+        try:
+            await reset_database(sessions)
+            successful_monitor, successful_run = await create_monitor_run(
+                sessions,
+                email="timed-success@example.com",
+            )
+            failed_monitor, failed_run = await create_monitor_run(
+                sessions,
+                email="timed-failure@example.com",
+                url="https://timed-failure.example/health",
+            )
+
+            async def handler(request: httpx.Request) -> httpx.Response:
+                if request.url.host == "timed-failure.example":
+                    raise httpx.ConnectError("failed", request=request)
+                return httpx.Response(200, content=b"ok")
+
+            success_clock = iter([10.0, 10.123])
+            failure_clock = iter([20.0, 20.075])
+            successful_result = await execute_monitor_run(
+                successful_run.id,
+                session_factory=sessions,
+                destination_resolver=public_resolver,
+                client_factory=client_factory(httpx.MockTransport(handler), []),
+                clock=lambda: next(success_clock),
+            )
+            failed_result = await execute_monitor_run(
+                failed_run.id,
+                session_factory=sessions,
+                destination_resolver=public_resolver,
+                client_factory=client_factory(httpx.MockTransport(handler), []),
+                clock=lambda: next(failure_clock),
+            )
+            assert successful_result.status == failed_result.status == "completed"
+
+            async with sessions() as session:
+                success_check = await session.scalar(
+                    select(MonitorCheck).where(MonitorCheck.run_id == successful_run.id)
+                )
+                failed_check = await session.scalar(
+                    select(MonitorCheck).where(MonitorCheck.run_id == failed_run.id)
+                )
+                refreshed_successful_monitor = await session.get(
+                    Monitor, successful_monitor.id
+                )
+                refreshed_failed_monitor = await session.get(Monitor, failed_monitor.id)
+            assert success_check is not None
+            assert failed_check is not None
+            assert success_check.response_time_ms == 123
+            assert failed_check.response_time_ms == 75
+            assert success_check.response_time_ms >= 0
+            assert failed_check.response_time_ms >= 0
+            assert refreshed_successful_monitor is not None
+            assert refreshed_failed_monitor is not None
+            assert refreshed_successful_monitor.latest_response_time_ms == 123
+            assert refreshed_failed_monitor.latest_response_time_ms == 75
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_worker_records_null_response_time_when_request_never_starts() -> None:
+    async def scenario() -> None:
+        engine, sessions = await create_session_factory()
+        try:
+            await reset_database(sessions)
+            monitor, run = await create_monitor_run(
+                sessions,
+                email="unreachable-destination@example.com",
+            )
+
+            async def unsafe_resolver(_hostname: str, _port: int) -> Sequence[str]:
+                return ["127.0.0.1"]
+
+            result = await execute_monitor_run(
+                run.id,
+                session_factory=sessions,
+                destination_resolver=unsafe_resolver,
+                client_factory=client_factory(httpx.MockTransport(lambda _: None), []),
+            )
+            assert result.status == "completed"
+            async with sessions() as session:
+                check = await session.scalar(select(MonitorCheck))
+                refreshed_monitor = await session.get(Monitor, monitor.id)
+            assert check is not None
+            assert check.response_time_ms is None
+            assert refreshed_monitor is not None
+            assert refreshed_monitor.latest_response_time_ms is None
         finally:
             await engine.dispose()
 
