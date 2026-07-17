@@ -11,6 +11,7 @@ from sqlalchemy import (
     Integer,
     SmallInteger,
     Text,
+    UniqueConstraint,
     func,
     text,
 )
@@ -40,6 +41,7 @@ class MonitorCheck(Base):
         ),
         Index("ix_monitor_checks_monitor_started_at", "monitor_id", "started_at"),
         Index("ix_monitor_checks_run_id", "run_id"),
+        UniqueConstraint("run_id", name="uq_monitor_checks_run_id"),
     )
 
     id: Mapped[UUID] = mapped_column(

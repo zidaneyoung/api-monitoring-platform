@@ -10,9 +10,11 @@ from uuid import UUID, uuid4
 import httpx
 import pytest
 from sqlalchemy import select, text
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.celery_app import celery_app
+from app.config import load_settings
 from app.database import create_database_engine
 from app.models import Monitor, MonitorCheck, MonitorRun, User
 from app.monitoring.worker import execute_monitor_run, normalize_monitor_error
@@ -22,6 +24,10 @@ def database_url() -> str:
     value = os.getenv("TEST_DATABASE_URL")
     if value is None:
         pytest.skip("TEST_DATABASE_URL is required for worker integration tests")
+    if make_url(value).render_as_string(hide_password=True) == make_url(
+        load_settings().database_url
+    ).render_as_string(hide_password=True):
+        pytest.fail("TEST_DATABASE_URL must not target the application database")
     return value
 
 
@@ -147,6 +153,10 @@ def test_worker_processes_run_with_current_method_timeout_and_validation(
             assert checks[0].response_time_ms is not None
             assert checks[0].response_time_ms >= 0
             assert checks[0].http_status_code == 204
+            assert checks[0].tls_expires_at is None
+            refreshed_monitor = await session.get(Monitor, monitor.id)
+            assert refreshed_monitor is not None
+            assert refreshed_monitor.status == "up"
         finally:
             await engine.dispose()
 
@@ -505,6 +515,96 @@ def test_worker_records_null_response_time_when_request_never_starts() -> None:
             assert refreshed_monitor is not None
             assert refreshed_monitor.latest_response_time_ms is None
             assert refreshed_monitor.latest_status_code is None
+            assert refreshed_monitor.latest_tls_expires_at is None
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_worker_records_peer_tls_expiration_for_https() -> None:
+    class FakeSslObject:
+        def getpeercert(self) -> dict[str, str]:
+            return {"notAfter": "Jan 02 03:04:05 2030 UTC"}
+
+    class FakeNetworkStream:
+        def get_extra_info(self, name: str) -> FakeSslObject | None:
+            return FakeSslObject() if name == "ssl_object" else None
+
+    async def scenario() -> None:
+        engine, sessions = await create_session_factory()
+        try:
+            await reset_database(sessions)
+            monitor, run = await create_monitor_run(
+                sessions,
+                email="tls-expiration@example.com",
+            )
+
+            async def handler(_request: httpx.Request) -> httpx.Response:
+                return httpx.Response(
+                    204,
+                    content=b"ok",
+                    extensions={"network_stream": FakeNetworkStream()},
+                )
+
+            result = await execute_monitor_run(
+                run.id,
+                session_factory=sessions,
+                destination_resolver=public_resolver,
+                client_factory=client_factory(httpx.MockTransport(handler), []),
+            )
+            assert result.status == "completed"
+            expected = datetime(2030, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
+            async with sessions() as session:
+                check = await session.scalar(select(MonitorCheck))
+                refreshed_monitor = await session.get(Monitor, monitor.id)
+            assert check is not None
+            assert check.tls_expires_at == expected
+            assert refreshed_monitor is not None
+            assert refreshed_monitor.latest_tls_expires_at == expected
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_repeated_worker_delivery_creates_one_check_and_one_result_update() -> None:
+    async def scenario() -> None:
+        engine, sessions = await create_session_factory()
+        try:
+            await reset_database(sessions)
+            monitor, run = await create_monitor_run(
+                sessions,
+                email="idempotent@example.com",
+            )
+
+            async def handler(_request: httpx.Request) -> httpx.Response:
+                await asyncio.sleep(0.02)
+                return httpx.Response(204, content=b"ok")
+
+            results = await asyncio.gather(
+                execute_monitor_run(
+                    run.id,
+                    session_factory=sessions,
+                    destination_resolver=public_resolver,
+                    client_factory=client_factory(httpx.MockTransport(handler), []),
+                ),
+                execute_monitor_run(
+                    run.id,
+                    session_factory=sessions,
+                    destination_resolver=public_resolver,
+                    client_factory=client_factory(httpx.MockTransport(handler), []),
+                ),
+            )
+            assert sorted(result.status for result in results) == ["completed", "skipped"]
+            assert sum(result.check_created for result in results) == 1
+            async with sessions() as session:
+                checks = list((await session.scalars(select(MonitorCheck))).all())
+                refreshed_monitor = await session.get(Monitor, monitor.id)
+            assert len(checks) == 1
+            assert refreshed_monitor is not None
+            assert refreshed_monitor.status == "up"
+            assert refreshed_monitor.consecutive_successes == 1
         finally:
             await engine.dispose()
 

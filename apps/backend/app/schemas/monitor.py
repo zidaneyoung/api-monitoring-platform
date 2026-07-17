@@ -60,6 +60,7 @@ class MonitorResponse(BaseModel):
     last_checked_at: datetime | None
     latest_response_time_ms: int | None
     latest_status_code: int | None
+    latest_tls_expires_at: datetime | None
 
 
 class MonitorListResponse(BaseModel):

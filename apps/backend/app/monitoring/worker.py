@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.config import load_settings
 from app.database import SessionFactory
 from app.models import Monitor, MonitorCheck, MonitorRun
-from app.monitoring.state import monitor_can_execute_request
+from app.monitoring.state import apply_monitor_result, monitor_can_execute_request
 from app.security.monitor_destinations import (
     DestinationResolver,
     DestinationSecurityError,
@@ -53,6 +53,7 @@ class MonitorRequest:
 class RequestResponse:
     response_time_ms: int
     status_code: int
+    tls_expires_at: datetime | None
 
 
 class ResponseLimitError(RuntimeError):
@@ -100,6 +101,28 @@ def normalize_monitor_error(error: Exception) -> tuple[str, str]:
     if isinstance(error, httpx.HTTPError):
         return "request", "Monitor request failed."
     return "internal", "Monitor execution failed."
+
+
+def _certificate_expiration(response: httpx.Response) -> datetime | None:
+    """Read only the peer-certificate expiry from an HTTPS transport stream."""
+
+    stream = response.extensions.get("network_stream")
+    get_extra_info = getattr(stream, "get_extra_info", None)
+    if not callable(get_extra_info):
+        return None
+    ssl_object = get_extra_info("ssl_object")
+    getpeercert = getattr(ssl_object, "getpeercert", None)
+    if not callable(getpeercert):
+        return None
+    not_after = getpeercert().get("notAfter")
+    if not isinstance(not_after, str):
+        return None
+    try:
+        return datetime.strptime(not_after, "%b %d %H:%M:%S %Y %Z").replace(
+            tzinfo=timezone.utc
+        )
+    except ValueError:
+        return None
 
 
 async def _expire_run(
@@ -173,25 +196,28 @@ async def _load_active_request(
 ) -> MonitorRequest | MonitorExecutionResult:
     try:
         async with session_factory() as session:
-            run = await session.get(MonitorRun, run_id)
-            if run is None:
-                return MonitorExecutionResult("missing", False)
-            if run.status != "running":
-                return MonitorExecutionResult("skipped", False)
+            async with session.begin():
+                run = await session.get(MonitorRun, run_id)
+                if run is None:
+                    return MonitorExecutionResult("missing", False)
+                if run.status != "running":
+                    return MonitorExecutionResult("skipped", False)
 
-            monitor = await session.get(Monitor, run.monitor_id)
-            if not monitor_can_execute_request(monitor):
-                return await _expire_run(run_id, session_factory=session_factory)
-            if monitor is None:
-                return MonitorExecutionResult("missing", False)
-            return MonitorRequest(
-                monitor_id=monitor.id,
-                url=monitor.url,
-                http_method=monitor.http_method,
-                timeout_seconds=monitor.timeout_seconds,
-                expected_status_min=monitor.expected_status_min,
-                expected_status_max=monitor.expected_status_max,
-            )
+                monitor = await session.get(Monitor, run.monitor_id)
+                if monitor is None:
+                    return MonitorExecutionResult("missing", False)
+                if not monitor_can_execute_request(monitor):
+                    run.status = "expired"
+                    run.completed_at = datetime.now(timezone.utc)
+                    return MonitorExecutionResult("expired", False)
+                return MonitorRequest(
+                    monitor_id=monitor.id,
+                    url=monitor.url,
+                    http_method=monitor.http_method,
+                    timeout_seconds=monitor.timeout_seconds,
+                    expected_status_min=monitor.expected_status_min,
+                    expected_status_max=monitor.expected_status_max,
+                )
     except SQLAlchemyError:
         logger.warning("monitor_worker_database_failure")
         return MonitorExecutionResult("failed", False)
@@ -223,6 +249,7 @@ async def _perform_request(
         try:
             current_url = destination.url
             visited = {current_url}
+            tls_expires_at: datetime | None = None
             for redirect_count in range(MAX_REDIRECTS + 1):
                 async with client.stream(request.http_method, current_url) as response:
                     await _read_response_with_limit(
@@ -231,7 +258,9 @@ async def _perform_request(
                     )
                     status_code = response.status_code
                     location = response.headers.get("location")
+                    response_tls_expires_at = _certificate_expiration(response)
                 if status_code not in {301, 302, 303, 307, 308} or not location:
+                    tls_expires_at = response_tls_expires_at
                     break
                 if redirect_count == MAX_REDIRECTS:
                     raise httpx.TooManyRedirects("redirect limit reached")
@@ -252,6 +281,7 @@ async def _perform_request(
         return RequestResponse(
             response_time_ms=max(0, round((clock() - request_started) * 1000)),
             status_code=status_code,
+            tls_expires_at=tls_expires_at,
         )
 
 
@@ -261,6 +291,7 @@ async def _complete_run(
     started_at: datetime,
     response_time_ms: int | None,
     http_status_code: int | None,
+    tls_expires_at: datetime | None,
     success: bool,
     error_category: str | None,
     error_message: str | None,
@@ -277,9 +308,16 @@ async def _complete_run(
                 )
                 if run is None:
                     return MonitorExecutionResult("missing", False)
+                if run.status != "running":
+                    return MonitorExecutionResult("skipped", False)
                 monitor = await session.get(Monitor, run.monitor_id)
                 if monitor is None:
                     return MonitorExecutionResult("missing", False)
+                existing_check = await session.scalar(
+                    select(MonitorCheck.id).where(MonitorCheck.run_id == run.id)
+                )
+                if existing_check is not None:
+                    return MonitorExecutionResult("skipped", False)
 
                 session.add(
                     MonitorCheck(
@@ -292,11 +330,14 @@ async def _complete_run(
                         http_status_code=http_status_code,
                         error_category=error_category,
                         error_message=error_message,
+                        tls_expires_at=tls_expires_at,
                     )
                 )
                 monitor.last_checked_at = completed_at
                 monitor.latest_response_time_ms = response_time_ms
                 monitor.latest_status_code = http_status_code
+                monitor.latest_tls_expires_at = tls_expires_at
+                apply_monitor_result(monitor, success=success)
                 run.status = "completed"
                 run.completed_at = completed_at
                 return MonitorExecutionResult("completed", True)
@@ -336,6 +377,7 @@ async def execute_monitor_run(
     started_at = datetime.now(timezone.utc)
     response_time_ms: int | None = None
     http_status_code: int | None = None
+    tls_expires_at: datetime | None = None
     success = False
     try:
         response = await _perform_request(
@@ -349,6 +391,7 @@ async def execute_monitor_run(
         )
         response_time_ms = response.response_time_ms
         http_status_code = response.status_code
+        tls_expires_at = response.tls_expires_at
         success = (
             request_or_result.expected_status_min
             <= http_status_code
@@ -379,6 +422,7 @@ async def execute_monitor_run(
         started_at=started_at,
         response_time_ms=response_time_ms,
         http_status_code=http_status_code,
+        tls_expires_at=tls_expires_at,
         success=success,
         error_category=error_category,
         error_message=error_message,
