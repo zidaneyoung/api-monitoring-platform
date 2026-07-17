@@ -1,7 +1,6 @@
 import Link from "next/link"
 import {
   ActivityIcon,
-  AlertTriangleIcon,
   CircleCheckIcon,
   CircleHelpIcon,
   CirclePauseIcon,
@@ -10,12 +9,13 @@ import {
   PlusIcon,
 } from "lucide-react"
 
-import { getIncidents } from "@/app/monitors/incidents-data"
 import { mockMonitors, type Monitor } from "@/app/monitors/monitor-data"
 import { EmptyState, ErrorState, LoadingState } from "@/components/states"
 import { StatusBadge, type MonitorStatus } from "@/components/status-badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+
+import { ActiveIncidents } from "./active-incidents"
 
 type PageProps = {
   searchParams: Promise<{ state?: string | string[] }>
@@ -105,32 +105,6 @@ function RecentMonitors({ monitors }: { monitors: Monitor[] }) {
               <StatusBadge status={monitor.status} />
             </div>
           </div>
-        ))}
-      </CardContent>
-    </Card>
-  )
-}
-
-function ActiveIncidents() {
-  const incidents = getIncidents("open")
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Active incidents</CardTitle>
-        <CardDescription>{incidents.length} issue{incidents.length === 1 ? "" : "s"} need attention.</CardDescription>
-      </CardHeader>
-      <CardContent className="grid gap-3">
-        {incidents.map((incident) => (
-          <Link key={incident.id} href={`/monitors/incidents/${incident.id}`} className="rounded-lg border border-status-down/30 bg-status-down/10 p-3 transition-colors hover:bg-status-down/20">
-            <div className="flex items-start gap-3">
-              <AlertTriangleIcon className="mt-0.5 size-4 shrink-0 text-status-down-foreground" aria-hidden="true" />
-              <div className="min-w-0">
-                <p className="font-medium">{incident.title}</p>
-                <p className="mt-1 text-sm text-muted-foreground">{incident.monitorName} · {incident.duration}</p>
-              </div>
-            </div>
-          </Link>
         ))}
       </CardContent>
     </Card>
