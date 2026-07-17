@@ -16,7 +16,15 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from app.celery_app import celery_app
 from app.config import load_settings
 from app.database import create_database_engine
-from app.models import Incident, Monitor, MonitorCheck, MonitorRun, User
+from app.models import (
+    Incident,
+    IncidentEvent,
+    Monitor,
+    MonitorCheck,
+    MonitorRun,
+    NotificationDelivery,
+    User,
+)
 from app.monitoring import worker
 from app.monitoring.worker import execute_monitor_run, normalize_monitor_error
 
@@ -81,6 +89,22 @@ async def create_monitor_run(
         await session.refresh(monitor)
         await session.refresh(run)
         return monitor, run
+
+
+async def create_additional_run(
+    sessions: async_sessionmaker,
+    monitor_id: UUID,
+) -> MonitorRun:
+    async with sessions() as session:
+        run = MonitorRun(
+            monitor_id=monitor_id,
+            scheduled_for=datetime.now(timezone.utc),
+            enqueued_at=datetime.now(timezone.utc),
+        )
+        session.add(run)
+        await session.commit()
+        await session.refresh(run)
+        return run
 
 
 async def public_resolver(_hostname: str, _port: int) -> Sequence[str]:
@@ -698,6 +722,132 @@ def test_failed_counter_update_rolls_back_check_and_monitor_changes(
             assert refreshed_monitor is not None
             assert refreshed_monitor.consecutive_failures == 0
             assert refreshed_monitor.consecutive_successes == 0
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("failure_threshold", [1, 3])
+def test_failure_threshold_opens_incident_with_safe_related_events(
+    failure_threshold: int,
+) -> None:
+    async def scenario() -> None:
+        engine, sessions = await create_session_factory()
+        try:
+            await reset_database(sessions)
+            monitor, first_run = await create_monitor_run(
+                sessions,
+                email=f"threshold-{failure_threshold}@example.com",
+                failure_threshold=failure_threshold,
+            )
+
+            async def handler(_request: httpx.Request) -> httpx.Response:
+                return httpx.Response(500, content=b"unsafe body must not persist")
+
+            runs = [first_run]
+            for _ in range(1, failure_threshold):
+                runs.append(await create_additional_run(sessions, monitor.id))
+
+            for index, run in enumerate(runs, start=1):
+                result = await execute_monitor_run(
+                    run.id,
+                    session_factory=sessions,
+                    destination_resolver=public_resolver,
+                    client_factory=client_factory(httpx.MockTransport(handler), []),
+                )
+                assert result.status == "completed"
+                if index < failure_threshold:
+                    async with sessions() as session:
+                        assert await session.scalar(select(Incident.id)) is None
+
+            async with sessions() as session:
+                incidents = list((await session.scalars(select(Incident))).all())
+                events = list((await session.scalars(select(IncidentEvent))).all())
+                deliveries = list(
+                    (await session.scalars(select(NotificationDelivery))).all()
+                )
+                checks = list(
+                    (
+                        await session.scalars(
+                            select(MonitorCheck).order_by(MonitorCheck.completed_at)
+                        )
+                    ).all()
+                )
+                refreshed_monitor = await session.get(Monitor, monitor.id)
+
+            assert len(incidents) == 1
+            incident = incidents[0]
+            assert incident.monitor_id == monitor.id
+            assert incident.user_id == monitor.user_id
+            assert incident.status == "open"
+            assert incident.opened_at == incident.detected_at
+            assert incident.opened_at.tzinfo is not None
+            assert incident.triggering_check_id == checks[-1].id
+            assert incident.cause_category == "unexpected_status"
+            assert incident.cause_message == "HTTP status is outside the accepted range."
+            assert "unsafe body" not in incident.cause_message
+            assert refreshed_monitor is not None
+            assert refreshed_monitor.status == "down"
+            assert refreshed_monitor.consecutive_failures == failure_threshold
+            assert len(events) == 1
+            assert events[0].incident_id == incident.id
+            assert events[0].sequence_number == 1
+            assert events[0].event_type == "opened"
+            assert events[0].occurred_at == incident.opened_at
+            assert len(deliveries) == 1
+            assert deliveries[0].incident_id == incident.id
+            assert deliveries[0].user_id == monitor.user_id
+            assert deliveries[0].event_type == "incident_opened"
+            assert deliveries[0].channel == "email"
+            assert deliveries[0].status == "pending"
+            assert deliveries[0].attempt_count == 0
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_incident_opening_write_failure_rolls_back_complete_operation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        engine, sessions = await create_session_factory()
+        try:
+            await reset_database(sessions)
+            monitor, run = await create_monitor_run(
+                sessions,
+                email="opening-rollback@example.com",
+                failure_threshold=1,
+            )
+            original_event = worker.IncidentEvent
+
+            def invalid_event(**values: object) -> IncidentEvent:
+                values["sequence_number"] = 0
+                return original_event(**values)
+
+            monkeypatch.setattr(worker, "IncidentEvent", invalid_event)
+
+            async def handler(_request: httpx.Request) -> httpx.Response:
+                return httpx.Response(500, content=b"failed")
+
+            result = await execute_monitor_run(
+                run.id,
+                session_factory=sessions,
+                destination_resolver=public_resolver,
+                client_factory=client_factory(httpx.MockTransport(handler), []),
+            )
+
+            assert result.status == "failed"
+            async with sessions() as session:
+                refreshed_monitor = await session.get(Monitor, monitor.id)
+                assert await session.scalar(select(MonitorCheck.id)) is None
+                assert await session.scalar(select(Incident.id)) is None
+                assert await session.scalar(select(IncidentEvent.id)) is None
+                assert await session.scalar(select(NotificationDelivery.id)) is None
+            assert refreshed_monitor is not None
+            assert refreshed_monitor.status == "unknown"
+            assert refreshed_monitor.consecutive_failures == 0
         finally:
             await engine.dispose()
 
