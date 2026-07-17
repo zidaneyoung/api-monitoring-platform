@@ -602,6 +602,7 @@ def test_monitor_details_returns_owned_configuration_and_latest_state() -> None:
         "last_checked_at": body["last_checked_at"],
         "latest_response_time_ms": 125,
         "latest_status_code": 204,
+        "latest_tls_expires_at": None,
     }
     assert body["next_check_at"] is not None
     assert body["last_checked_at"] is not None

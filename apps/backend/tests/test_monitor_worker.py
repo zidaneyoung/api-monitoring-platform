@@ -172,6 +172,7 @@ def test_worker_processes_run_with_current_method_timeout_and_validation(
                 checks = list(
                     (await session.scalars(select(MonitorCheck))).all()
                 )
+                refreshed_monitor = await session.get(Monitor, monitor.id)
             assert stored_run is not None
             assert stored_run.status == "completed"
             assert stored_run.started_at is not None
@@ -183,7 +184,6 @@ def test_worker_processes_run_with_current_method_timeout_and_validation(
             assert checks[0].response_time_ms >= 0
             assert checks[0].http_status_code == 204
             assert checks[0].tls_expires_at is None
-            refreshed_monitor = await session.get(Monitor, monitor.id)
             assert refreshed_monitor is not None
             assert refreshed_monitor.status == "up"
         finally:
@@ -1013,7 +1013,7 @@ def test_resolved_incident_history_survives_new_failure_sequence() -> None:
     asyncio.run(scenario())
 
 
-def test_recovery_sequence_is_unique_interruptible_and_keeps_incident_open() -> None:
+def test_recovery_sequence_is_unique_interruptible_and_resolves_at_threshold() -> None:
     async def scenario() -> None:
         engine, sessions = await create_session_factory()
         try:
@@ -1081,12 +1081,12 @@ def test_recovery_sequence_is_unique_interruptible_and_keeps_incident_open() -> 
                 refreshed_monitor = await session.get(Monitor, monitor.id)
                 checks = list((await session.scalars(select(MonitorCheck))).all())
             assert incident is not None
-            assert incident.status == "open"
-            assert incident.resolved_at is None
+            assert incident.status == "resolved"
+            assert incident.resolved_at is not None
             assert refreshed_monitor is not None
-            assert refreshed_monitor.status == "down"
+            assert refreshed_monitor.status == "up"
             assert refreshed_monitor.consecutive_failures == 0
-            assert refreshed_monitor.consecutive_successes == 2
+            assert refreshed_monitor.consecutive_successes == 0
             assert len(checks) == 5
         finally:
             await engine.dispose()
