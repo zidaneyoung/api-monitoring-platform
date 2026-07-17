@@ -3,6 +3,8 @@ from collections.abc import Sequence
 from datetime import datetime, timezone
 import logging
 import os
+import socket
+import ssl
 from uuid import UUID, uuid4
 
 import httpx
@@ -13,7 +15,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from app.celery_app import celery_app
 from app.database import create_database_engine
 from app.models import Monitor, MonitorCheck, MonitorRun, User
-from app.monitoring.worker import execute_monitor_run
+from app.monitoring.worker import execute_monitor_run, normalize_monitor_error
 
 
 def database_url() -> str:
@@ -447,6 +449,33 @@ def test_worker_marks_transport_failures_unsuccessful(error: httpx.HTTPError) ->
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize(
+    ("error", "category", "message"),
+    [
+        (httpx.ConnectError("dns"), "dns", "Monitor hostname could not be resolved."),
+        (httpx.ConnectError("refused"), "connection_refused", "Monitor connection was refused."),
+        (httpx.ConnectError("connect"), "connection", "Monitor connection failed."),
+        (httpx.ConnectTimeout("timeout"), "connect_timeout", "Monitor connection timed out."),
+        (httpx.ReadTimeout("timeout"), "request_timeout", "Monitor request timed out."),
+        (httpx.ConnectError("tls"), "tls", "Monitor TLS connection failed."),
+        (RuntimeError("internal"), "internal", "Monitor execution failed."),
+    ],
+)
+def test_error_normalization_uses_safe_stable_values(
+    error: Exception,
+    category: str,
+    message: str,
+) -> None:
+    if category == "dns":
+        error.__cause__ = socket.gaierror("sensitive dns detail")
+    elif category == "connection_refused":
+        error.__cause__ = ConnectionRefusedError("sensitive connection detail")
+    elif category == "tls":
+        error.__cause__ = ssl.SSLError("sensitive tls detail")
+    assert normalize_monitor_error(error) == (category, message)
+    assert "sensitive" not in message
+
+
 def test_worker_records_null_response_time_when_request_never_starts() -> None:
     async def scenario() -> None:
         engine, sessions = await create_session_factory()
@@ -529,7 +558,7 @@ def test_failed_monitor_does_not_stop_other_worker_execution(
             assert len(checks) == 2
             failed_check = next(check for check in checks if check.run_id == failed_run.id)
             healthy_check = next(check for check in checks if check.run_id == healthy_run.id)
-            assert failed_check.error_category == "request_failed"
+            assert failed_check.error_category == "connection"
             assert healthy_check.error_category is None
             assert "monitor_worker_request_failed" in caplog.messages
             assert "failed.example" not in caplog.text

@@ -2,6 +2,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import logging
+import socket
+import ssl
 import time
 from uuid import UUID
 
@@ -68,6 +70,33 @@ def create_http_client(timeout_seconds: float) -> httpx.AsyncClient:
         follow_redirects=False,
         timeout=httpx.Timeout(timeout_seconds),
     )
+
+
+def normalize_monitor_error(error: Exception) -> tuple[str, str]:
+    """Map provider exceptions to safe stable values without retaining details."""
+
+    cause = error.__cause__
+    if isinstance(error, DestinationSecurityError):
+        return "unsafe_destination", "Monitor destination could not be reached safely."
+    if isinstance(error, ResponseLimitError):
+        return "response_limit", "Monitor response exceeded the safe size limit."
+    if isinstance(error, httpx.TooManyRedirects):
+        return "redirect", "Monitor redirect could not be completed safely."
+    if isinstance(error, httpx.ConnectTimeout):
+        return "connect_timeout", "Monitor connection timed out."
+    if isinstance(error, (httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout)):
+        return "request_timeout", "Monitor request timed out."
+    if isinstance(cause, socket.gaierror):
+        return "dns", "Monitor hostname could not be resolved."
+    if isinstance(cause, ConnectionRefusedError):
+        return "connection_refused", "Monitor connection was refused."
+    if isinstance(cause, ssl.SSLError):
+        return "tls", "Monitor TLS connection failed."
+    if isinstance(error, httpx.ConnectError):
+        return "connection", "Monitor connection failed."
+    if isinstance(error, httpx.HTTPError):
+        return "request", "Monitor request failed."
+    return "internal", "Monitor execution failed."
 
 
 async def _expire_run(
@@ -306,33 +335,23 @@ async def execute_monitor_run(
         )
     except DestinationSecurityError:
         logger.warning("monitor_worker_destination_rejected")
-        error_category = "unsafe_destination"
-        error_message = "Monitor destination could not be reached safely."
+        error_category, error_message = normalize_monitor_error(
+            DestinationSecurityError()
+        )
     except RequestAttemptError as error:
         response_time_ms = error.response_time_ms
-        if isinstance(error.cause, ResponseLimitError):
-            logger.warning("monitor_worker_response_limit_exceeded")
-            error_category = "response_limit"
-            error_message = "Monitor response exceeded the safe size limit."
-        elif isinstance(error.cause, httpx.HTTPError):
-            logger.warning("monitor_worker_request_failed")
-            error_category = "request_failed"
-            error_message = "Monitor request failed."
-        else:
-            logger.warning("monitor_worker_internal_failure")
-            error_category = "internal_error"
-            error_message = "Monitor execution failed."
-    except httpx.HTTPError:
-        logger.warning("monitor_worker_request_failed")
-        error_category = "request_failed"
-        error_message = "Monitor request failed."
-    except Exception:
-        logger.warning("monitor_worker_internal_failure")
-        error_category = "internal_error"
-        error_message = "Monitor execution failed."
+        error_category, error_message = normalize_monitor_error(error.cause)
+        logger.warning("monitor_worker_request_failed", extra={"category": error_category})
+    except Exception as error:
+        error_category, error_message = normalize_monitor_error(error)
+        logger.warning("monitor_worker_request_failed", extra={"category": error_category})
     else:
-        error_category = None
-        error_message = None
+        if success:
+            error_category = None
+            error_message = None
+        else:
+            error_category = "unexpected_status"
+            error_message = "HTTP status is outside the accepted range."
 
     return await _complete_run(
         parsed_run_id,
