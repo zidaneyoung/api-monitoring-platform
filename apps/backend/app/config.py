@@ -31,6 +31,7 @@ class Settings:
     redis_port: int
     redis_db: int
     redis_url: str
+    scheduler_dispatch_interval_seconds: int
 
 
 def _positive_int(name: str, default: str) -> int:
@@ -81,6 +82,10 @@ def load_settings() -> Settings:
     auth_registration_rate_limit_window_seconds = _positive_int(
         "AUTH_REGISTRATION_RATE_LIMIT_WINDOW_SECONDS",
         "60",
+    )
+    scheduler_dispatch_interval_seconds = _positive_int(
+        "SCHEDULER_DISPATCH_INTERVAL_SECONDS",
+        "30",
     )
 
     session_cookie_secure = environment.lower() == "production" or _boolean(
@@ -151,4 +156,5 @@ def load_settings() -> Settings:
         redis_port=redis_port,
         redis_db=redis_db,
         redis_url=redis_url,
+        scheduler_dispatch_interval_seconds=scheduler_dispatch_interval_seconds,
     )
