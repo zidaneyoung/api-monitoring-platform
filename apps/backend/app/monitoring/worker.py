@@ -9,7 +9,7 @@ from urllib.parse import urljoin
 from uuid import UUID, uuid4
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -135,6 +135,60 @@ async def _add_incident_opening(
                 destination=owner_email,
                 status="pending",
                 deduplication_key=f"incident:{incident_id}:opened",
+            ),
+        ]
+    )
+
+
+async def _add_incident_resolution(
+    session: AsyncSession,
+    *,
+    monitor: Monitor,
+    check: MonitorCheck,
+    owner_email: str,
+    occurred_at: datetime,
+) -> None:
+    incident = await session.scalar(
+        select(Incident)
+        .where(
+            Incident.monitor_id == monitor.id,
+            Incident.status.in_(("open", "acknowledged")),
+        )
+        .with_for_update()
+    )
+    if incident is None:
+        return
+
+    next_sequence = (
+        await session.scalar(
+            select(func.coalesce(func.max(IncidentEvent.sequence_number), 0)).where(
+                IncidentEvent.incident_id == incident.id
+            )
+        )
+    ) + 1
+    incident.status = "resolved"
+    incident.resolved_at = occurred_at
+    incident.recovery_check = check
+    monitor.status = "up"
+    monitor.consecutive_failures = 0
+    monitor.consecutive_successes = 0
+    session.add_all(
+        [
+            IncidentEvent(
+                incident=incident,
+                sequence_number=next_sequence,
+                event_type="resolved",
+                occurred_at=occurred_at,
+                message="Monitor recovered after consecutive successful checks.",
+            ),
+            NotificationDelivery(
+                user_id=monitor.user_id,
+                incident=incident,
+                event_type="incident_recovered",
+                channel="email",
+                destination=owner_email,
+                status="pending",
+                deduplication_key=f"incident:{incident.id}:recovered",
             ),
         ]
     )
@@ -419,6 +473,19 @@ async def _complete_run(
                     if owner_email is None:
                         raise SQLAlchemyError("monitor owner is missing")
                     await _add_incident_opening(
+                        session,
+                        monitor=monitor,
+                        check=check,
+                        owner_email=owner_email,
+                        occurred_at=completed_at,
+                    )
+                elif transition == "incident_recovery_ready":
+                    owner_email = await session.scalar(
+                        select(User.email).where(User.id == monitor.user_id)
+                    )
+                    if owner_email is None:
+                        raise SQLAlchemyError("monitor owner is missing")
+                    await _add_incident_resolution(
                         session,
                         monitor=monitor,
                         check=check,

@@ -9,7 +9,7 @@ from uuid import UUID, uuid4
 
 import httpx
 import pytest
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
@@ -1145,6 +1145,288 @@ def test_recovery_counter_write_failure_rolls_back_successful_check(
             assert refreshed_monitor.consecutive_successes == 0
             assert len(checks) == 1
             assert incident is not None and incident.status == "open"
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("recovery_threshold", [1, 3])
+def test_recovery_threshold_resolves_once_and_allows_later_incident(
+    recovery_threshold: int,
+) -> None:
+    async def scenario() -> None:
+        engine, sessions = await create_session_factory()
+        try:
+            await reset_database(sessions)
+            monitor, opening_run = await create_monitor_run(
+                sessions,
+                email=f"resolve-{recovery_threshold}@example.com",
+                failure_threshold=1,
+                recovery_threshold=recovery_threshold,
+            )
+
+            async def failed_handler(_request: httpx.Request) -> httpx.Response:
+                return httpx.Response(500, content=b"failed")
+
+            async def success_handler(_request: httpx.Request) -> httpx.Response:
+                return httpx.Response(200, content=b"ok")
+
+            await execute_monitor_run(
+                opening_run.id,
+                session_factory=sessions,
+                destination_resolver=public_resolver,
+                client_factory=client_factory(httpx.MockTransport(failed_handler), []),
+            )
+            async with sessions() as session:
+                opened_incident = await session.scalar(select(Incident))
+            assert opened_incident is not None
+            original_opened_at = opened_incident.opened_at
+
+            recovery_runs: list[MonitorRun] = []
+            for index in range(1, recovery_threshold + 1):
+                recovery_run = await create_additional_run(sessions, monitor.id)
+                recovery_runs.append(recovery_run)
+                await execute_monitor_run(
+                    recovery_run.id,
+                    session_factory=sessions,
+                    destination_resolver=public_resolver,
+                    client_factory=client_factory(
+                        httpx.MockTransport(success_handler), []
+                    ),
+                )
+                if index < recovery_threshold:
+                    async with sessions() as session:
+                        pending_incident = await session.scalar(select(Incident))
+                        pending_monitor = await session.get(Monitor, monitor.id)
+                    assert pending_incident is not None
+                    assert pending_incident.status == "open"
+                    assert pending_incident.resolved_at is None
+                    assert pending_monitor is not None
+                    assert pending_monitor.status == "down"
+
+            async with sessions() as session:
+                resolved_incident = await session.scalar(select(Incident))
+                resolved_monitor = await session.get(Monitor, monitor.id)
+                recovery_check = await session.scalar(
+                    select(MonitorCheck).where(
+                        MonitorCheck.run_id == recovery_runs[-1].id
+                    )
+                )
+                events = list(
+                    (
+                        await session.scalars(
+                            select(IncidentEvent).order_by(
+                                IncidentEvent.sequence_number
+                            )
+                        )
+                    ).all()
+                )
+                deliveries = list(
+                    (
+                        await session.scalars(
+                            select(NotificationDelivery).order_by(
+                                NotificationDelivery.created_at
+                            )
+                        )
+                    ).all()
+                )
+            assert resolved_incident is not None
+            assert resolved_incident.status == "resolved"
+            assert resolved_incident.opened_at == original_opened_at
+            assert resolved_incident.resolved_at is not None
+            assert resolved_incident.resolved_at.tzinfo is not None
+            assert recovery_check is not None
+            assert resolved_incident.recovery_check_id == recovery_check.id
+            assert resolved_monitor is not None
+            assert resolved_monitor.status == "up"
+            assert resolved_monitor.consecutive_failures == 0
+            assert resolved_monitor.consecutive_successes == 0
+            assert [event.event_type for event in events] == ["opened", "resolved"]
+            assert [event.sequence_number for event in events] == [1, 2]
+            assert [delivery.event_type for delivery in deliveries] == [
+                "incident_opened",
+                "incident_recovered",
+            ]
+            assert all(delivery.status == "pending" for delivery in deliveries)
+
+            fixed_resolved_at = resolved_incident.resolved_at
+            additional_success = await create_additional_run(sessions, monitor.id)
+            await execute_monitor_run(
+                additional_success.id,
+                session_factory=sessions,
+                destination_resolver=public_resolver,
+                client_factory=client_factory(httpx.MockTransport(success_handler), []),
+            )
+            async with sessions() as session:
+                unchanged = await session.get(Incident, resolved_incident.id)
+                event_count = await session.scalar(
+                    select(func.count()).select_from(IncidentEvent)
+                )
+                delivery_count = await session.scalar(
+                    select(func.count()).select_from(NotificationDelivery)
+                )
+            assert unchanged is not None and unchanged.resolved_at == fixed_resolved_at
+            assert event_count == 2
+            assert delivery_count == 2
+
+            later_failure = await create_additional_run(sessions, monitor.id)
+            await execute_monitor_run(
+                later_failure.id,
+                session_factory=sessions,
+                destination_resolver=public_resolver,
+                client_factory=client_factory(httpx.MockTransport(failed_handler), []),
+            )
+            async with sessions() as session:
+                incidents = list(
+                    (
+                        await session.scalars(
+                            select(Incident).order_by(Incident.opened_at)
+                        )
+                    ).all()
+                )
+            assert [incident.status for incident in incidents] == ["resolved", "open"]
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_concurrent_recovery_workers_resolve_incident_once() -> None:
+    async def scenario() -> None:
+        engine, sessions = await create_session_factory()
+        try:
+            await reset_database(sessions)
+            monitor, opening_run = await create_monitor_run(
+                sessions,
+                email="concurrent-recovery@example.com",
+                failure_threshold=1,
+                recovery_threshold=1,
+            )
+
+            async def failed_handler(_request: httpx.Request) -> httpx.Response:
+                return httpx.Response(500, content=b"failed")
+
+            async def success_handler(_request: httpx.Request) -> httpx.Response:
+                await asyncio.sleep(0.02)
+                return httpx.Response(200, content=b"ok")
+
+            await execute_monitor_run(
+                opening_run.id,
+                session_factory=sessions,
+                destination_resolver=public_resolver,
+                client_factory=client_factory(httpx.MockTransport(failed_handler), []),
+            )
+            recovery_runs = [
+                await create_additional_run(sessions, monitor.id) for _ in range(2)
+            ]
+            results = await asyncio.gather(
+                *(
+                    execute_monitor_run(
+                        run.id,
+                        session_factory=sessions,
+                        destination_resolver=public_resolver,
+                        client_factory=client_factory(
+                            httpx.MockTransport(success_handler), []
+                        ),
+                    )
+                    for run in recovery_runs
+                )
+            )
+            assert [result.status for result in results] == ["completed", "completed"]
+
+            async with sessions() as session:
+                incident = await session.scalar(select(Incident))
+                resolution_events = list(
+                    (
+                        await session.scalars(
+                            select(IncidentEvent).where(
+                                IncidentEvent.event_type == "resolved"
+                            )
+                        )
+                    ).all()
+                )
+                recovery_deliveries = list(
+                    (
+                        await session.scalars(
+                            select(NotificationDelivery).where(
+                                NotificationDelivery.event_type
+                                == "incident_recovered"
+                            )
+                        )
+                    ).all()
+                )
+            assert incident is not None and incident.status == "resolved"
+            assert len(resolution_events) == 1
+            assert len(recovery_deliveries) == 1
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_incident_resolution_write_failure_rolls_back_complete_operation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        engine, sessions = await create_session_factory()
+        try:
+            await reset_database(sessions)
+            monitor, opening_run = await create_monitor_run(
+                sessions,
+                email="resolution-rollback@example.com",
+                failure_threshold=1,
+                recovery_threshold=1,
+            )
+
+            async def failed_handler(_request: httpx.Request) -> httpx.Response:
+                return httpx.Response(500, content=b"failed")
+
+            await execute_monitor_run(
+                opening_run.id,
+                session_factory=sessions,
+                destination_resolver=public_resolver,
+                client_factory=client_factory(httpx.MockTransport(failed_handler), []),
+            )
+            recovery_run = await create_additional_run(sessions, monitor.id)
+            original_delivery = worker.NotificationDelivery
+
+            def invalid_delivery(**values: object) -> NotificationDelivery:
+                values["destination"] = ""
+                return original_delivery(**values)
+
+            monkeypatch.setattr(worker, "NotificationDelivery", invalid_delivery)
+
+            async def success_handler(_request: httpx.Request) -> httpx.Response:
+                return httpx.Response(200, content=b"ok")
+
+            result = await execute_monitor_run(
+                recovery_run.id,
+                session_factory=sessions,
+                destination_resolver=public_resolver,
+                client_factory=client_factory(httpx.MockTransport(success_handler), []),
+            )
+            assert result.status == "failed"
+
+            async with sessions() as session:
+                incident = await session.scalar(select(Incident))
+                refreshed_monitor = await session.get(Monitor, monitor.id)
+                checks = list((await session.scalars(select(MonitorCheck))).all())
+                events = list((await session.scalars(select(IncidentEvent))).all())
+                deliveries = list(
+                    (await session.scalars(select(NotificationDelivery))).all()
+                )
+            assert incident is not None
+            assert incident.status == "open"
+            assert incident.resolved_at is None
+            assert incident.recovery_check_id is None
+            assert refreshed_monitor is not None
+            assert refreshed_monitor.status == "down"
+            assert len(checks) == 1
+            assert [event.event_type for event in events] == ["opened"]
+            assert [delivery.event_type for delivery in deliveries] == [
+                "incident_opened"
+            ]
         finally:
             await engine.dispose()
 
