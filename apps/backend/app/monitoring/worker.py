@@ -5,6 +5,7 @@ import logging
 import socket
 import ssl
 import time
+from urllib.parse import urljoin
 from uuid import UUID
 
 import httpx
@@ -21,6 +22,7 @@ from app.security.monitor_destinations import (
     DestinationSecurityError,
     get_destination_resolver,
     validate_before_connection,
+    validate_redirect_destination,
 )
 
 
@@ -28,6 +30,7 @@ logger = logging.getLogger(__name__)
 
 ClientFactory = Callable[[float], httpx.AsyncClient]
 Clock = Callable[[], float]
+MAX_REDIRECTS = 5
 
 
 @dataclass(frozen=True)
@@ -218,11 +221,29 @@ async def _perform_request(
     async with client_factory(request.timeout_seconds) as client:
         request_started = clock()
         try:
-            async with client.stream(request.http_method, destination.url) as response:
-                await _read_response_with_limit(
-                    response,
-                    max_response_bytes=max_response_bytes,
+            current_url = destination.url
+            visited = {current_url}
+            for redirect_count in range(MAX_REDIRECTS + 1):
+                async with client.stream(request.http_method, current_url) as response:
+                    await _read_response_with_limit(
+                        response,
+                        max_response_bytes=max_response_bytes,
+                    )
+                    status_code = response.status_code
+                    location = response.headers.get("location")
+                if status_code not in {301, 302, 303, 307, 308} or not location:
+                    break
+                if redirect_count == MAX_REDIRECTS:
+                    raise httpx.TooManyRedirects("redirect limit reached")
+                next_url = urljoin(current_url, location)
+                next_destination = await validate_redirect_destination(
+                    next_url,
+                    destination_resolver,
                 )
+                if next_destination.url in visited:
+                    raise httpx.TooManyRedirects("redirect loop")
+                visited.add(next_destination.url)
+                current_url = next_destination.url
         except Exception as error:
             raise RequestAttemptError(
                 error,
@@ -230,7 +251,7 @@ async def _perform_request(
             ) from error
         return RequestResponse(
             response_time_ms=max(0, round((clock() - request_started) * 1000)),
-            status_code=response.status_code,
+            status_code=status_code,
         )
 
 

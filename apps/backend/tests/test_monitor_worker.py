@@ -511,6 +511,39 @@ def test_worker_records_null_response_time_when_request_never_starts() -> None:
     asyncio.run(scenario())
 
 
+def test_worker_validates_each_redirect_and_records_final_response() -> None:
+    async def scenario() -> None:
+        engine, sessions = await create_session_factory()
+        try:
+            await reset_database(sessions)
+            _, run = await create_monitor_run(
+                sessions, email="redirect@example.com", url="https://start.example/health"
+            )
+            resolver_calls: list[str] = []
+
+            async def resolver(hostname: str, _port: int) -> Sequence[str]:
+                resolver_calls.append(hostname)
+                return ["93.184.216.34"]
+
+            async def handler(request: httpx.Request) -> httpx.Response:
+                if request.url.host == "start.example":
+                    return httpx.Response(302, headers={"location": "https://final.example/ok"})
+                return httpx.Response(204, content=b"ok")
+
+            await execute_monitor_run(
+                run.id, session_factory=sessions, destination_resolver=resolver,
+                client_factory=client_factory(httpx.MockTransport(handler), []),
+            )
+            async with sessions() as session:
+                check = await session.scalar(select(MonitorCheck))
+            assert resolver_calls == ["start.example", "final.example"]
+            assert check is not None and check.http_status_code == 204 and check.success is True
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
 def test_failed_monitor_does_not_stop_other_worker_execution(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
