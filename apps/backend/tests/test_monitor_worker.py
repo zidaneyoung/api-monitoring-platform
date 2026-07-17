@@ -41,6 +41,8 @@ async def create_monitor_run(
     url: str = "https://monitor.example/health",
     http_method: str = "GET",
     timeout_seconds: int = 10,
+    expected_status_min: int = 200,
+    expected_status_max: int = 399,
     enabled: bool = True,
     status: str = "unknown",
 ) -> tuple[Monitor, MonitorRun]:
@@ -52,6 +54,8 @@ async def create_monitor_run(
             http_method=http_method,
             interval_seconds=60,
             timeout_seconds=timeout_seconds,
+            expected_status_min=expected_status_min,
+            expected_status_max=expected_status_max,
             is_enabled=enabled,
             status=status,
             next_check_at=datetime.now(timezone.utc),
@@ -358,6 +362,85 @@ def test_worker_records_healthy_and_unhealthy_response_statuses() -> None:
             assert unhealthy_check is not None and unhealthy_check.http_status_code == 503
             assert refreshed_healthy is not None and refreshed_healthy.latest_status_code == 204
             assert refreshed_unhealthy is not None and refreshed_unhealthy.latest_status_code == 503
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    ("status_code", "expected_success"),
+    [(200, True), (299, True), (199, False), (300, False)],
+)
+def test_worker_evaluates_accepted_status_range_boundaries(
+    status_code: int,
+    expected_success: bool,
+) -> None:
+    async def scenario() -> None:
+        engine, sessions = await create_session_factory()
+        try:
+            await reset_database(sessions)
+            _, run = await create_monitor_run(
+                sessions,
+                email=f"range-{status_code}@example.com",
+                expected_status_min=200,
+                expected_status_max=299,
+            )
+
+            async def handler(_request: httpx.Request) -> httpx.Response:
+                return httpx.Response(status_code, content=b"ok")
+
+            await execute_monitor_run(
+                run.id,
+                session_factory=sessions,
+                destination_resolver=public_resolver,
+                client_factory=client_factory(httpx.MockTransport(handler), []),
+            )
+            async with sessions() as session:
+                check = await session.scalar(select(MonitorCheck))
+            assert check is not None
+            assert check.http_status_code == status_code
+            assert check.success is expected_success
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        httpx.ConnectError("dns failure"),
+        httpx.ConnectError("connection failure"),
+        httpx.ConnectTimeout("timeout"),
+        httpx.ReadTimeout("timeout"),
+        httpx.ConnectError("tls failure"),
+    ],
+)
+def test_worker_marks_transport_failures_unsuccessful(error: httpx.HTTPError) -> None:
+    async def scenario() -> None:
+        engine, sessions = await create_session_factory()
+        try:
+            await reset_database(sessions)
+            _, run = await create_monitor_run(
+                sessions,
+                email=f"failure-{uuid4()}@example.com",
+            )
+
+            async def handler(request: httpx.Request) -> httpx.Response:
+                raise error.__class__(str(error), request=request)
+
+            await execute_monitor_run(
+                run.id,
+                session_factory=sessions,
+                destination_resolver=public_resolver,
+                client_factory=client_factory(httpx.MockTransport(handler), []),
+            )
+            async with sessions() as session:
+                check = await session.scalar(select(MonitorCheck))
+            assert check is not None
+            assert check.success is False
+            assert check.http_status_code is None
         finally:
             await engine.dispose()
 

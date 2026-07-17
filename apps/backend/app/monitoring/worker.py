@@ -40,6 +40,8 @@ class MonitorRequest:
     url: str
     http_method: str
     timeout_seconds: int
+    expected_status_min: int
+    expected_status_max: int
 
 
 @dataclass(frozen=True)
@@ -155,6 +157,8 @@ async def _load_active_request(
                 url=monitor.url,
                 http_method=monitor.http_method,
                 timeout_seconds=monitor.timeout_seconds,
+                expected_status_min=monitor.expected_status_min,
+                expected_status_max=monitor.expected_status_max,
             )
     except SQLAlchemyError:
         logger.warning("monitor_worker_database_failure")
@@ -207,6 +211,7 @@ async def _complete_run(
     started_at: datetime,
     response_time_ms: int | None,
     http_status_code: int | None,
+    success: bool,
     error_category: str | None,
     error_message: str | None,
     session_factory: async_sessionmaker[AsyncSession],
@@ -232,7 +237,7 @@ async def _complete_run(
                         run_id=run.id,
                         started_at=started_at,
                         completed_at=completed_at,
-                        success=False,
+                        success=success,
                         response_time_ms=response_time_ms,
                         http_status_code=http_status_code,
                         error_category=error_category,
@@ -281,6 +286,7 @@ async def execute_monitor_run(
     started_at = datetime.now(timezone.utc)
     response_time_ms: int | None = None
     http_status_code: int | None = None
+    success = False
     try:
         response = await _perform_request(
             request_or_result,
@@ -293,6 +299,11 @@ async def execute_monitor_run(
         )
         response_time_ms = response.response_time_ms
         http_status_code = response.status_code
+        success = (
+            request_or_result.expected_status_min
+            <= http_status_code
+            <= request_or_result.expected_status_max
+        )
     except DestinationSecurityError:
         logger.warning("monitor_worker_destination_rejected")
         error_category = "unsafe_destination"
@@ -328,6 +339,7 @@ async def execute_monitor_run(
         started_at=started_at,
         response_time_ms=response_time_ms,
         http_status_code=http_status_code,
+        success=success,
         error_category=error_category,
         error_message=error_message,
         session_factory=session_factory,
