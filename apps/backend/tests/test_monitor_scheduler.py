@@ -6,10 +6,12 @@ from uuid import UUID
 
 import pytest
 from sqlalchemy import select, text
+from sqlalchemy.engine import make_url
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.celery_app import celery_app
+from app.config import load_settings
 from app.database import create_database_engine
 from app.models import Monitor, MonitorRun, User
 from app.monitoring.scheduler import dispatch_due_monitors
@@ -19,6 +21,10 @@ def database_url() -> str:
     value = os.getenv("TEST_DATABASE_URL")
     if value is None:
         pytest.skip("TEST_DATABASE_URL is required for scheduler integration tests")
+    if make_url(value).render_as_string(hide_password=True) == make_url(
+        load_settings().database_url
+    ).render_as_string(hide_password=True):
+        pytest.fail("TEST_DATABASE_URL must not target the application database")
     return value
 
 

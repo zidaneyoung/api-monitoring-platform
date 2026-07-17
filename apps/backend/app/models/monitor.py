@@ -122,6 +122,9 @@ class Monitor(Base):
     last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     latest_response_time_ms: Mapped[int | None] = mapped_column(Integer)
     latest_status_code: Mapped[int | None] = mapped_column(SmallInteger)
+    latest_tls_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

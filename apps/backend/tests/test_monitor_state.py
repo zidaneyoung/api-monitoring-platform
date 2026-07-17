@@ -2,6 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 from app.models import Monitor
 from app.monitoring import (
+    apply_monitor_result,
     monitor_can_execute_request,
     monitor_is_scheduler_eligible,
 )
@@ -15,6 +16,10 @@ def monitor(*, status: str, enabled: bool, next_check_at: datetime | None) -> Mo
         timeout_seconds=10,
         status=status,
         is_enabled=enabled,
+        failure_threshold=3,
+        recovery_threshold=2,
+        consecutive_failures=0,
+        consecutive_successes=0,
         next_check_at=next_check_at,
     )
 
@@ -60,3 +65,27 @@ def test_resumed_monitor_becomes_executable_then_scheduler_eligible_when_due() -
     assert monitor_can_execute_request(resumed) is True
     assert monitor_is_scheduler_eligible(resumed, now) is False
     assert monitor_is_scheduler_eligible(resumed, next_check_at) is True
+
+
+def test_monitor_result_transitions_unknown_up_down_and_recovered_states() -> None:
+    now = datetime.now(timezone.utc)
+    current = monitor(status="unknown", enabled=True, next_check_at=now)
+
+    apply_monitor_result(current, success=True)
+    assert current.status == "up"
+    assert current.consecutive_successes == 1
+    assert current.consecutive_failures == 0
+
+    apply_monitor_result(current, success=False)
+    apply_monitor_result(current, success=False)
+    assert current.status == "up"
+    apply_monitor_result(current, success=False)
+    assert current.status == "down"
+    assert current.consecutive_failures == 3
+    assert current.consecutive_successes == 0
+
+    apply_monitor_result(current, success=True)
+    assert current.status == "down"
+    apply_monitor_result(current, success=True)
+    assert current.status == "up"
+    assert current.consecutive_successes == 2
