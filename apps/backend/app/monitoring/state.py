@@ -31,11 +31,13 @@ def apply_monitor_result(monitor: Monitor, *, success: bool) -> str | None:
     if success:
         monitor.consecutive_failures = 0
         monitor.consecutive_successes += 1
-        if monitor.status == "unknown" or (
+        if monitor.status == "unknown":
+            monitor.status = "up"
+        if (
             monitor.status == "down"
             and monitor.consecutive_successes >= monitor.recovery_threshold
         ):
-            monitor.status = "up"
+            return "incident_recovery_ready"
         return None
 
     monitor.consecutive_successes = 0
