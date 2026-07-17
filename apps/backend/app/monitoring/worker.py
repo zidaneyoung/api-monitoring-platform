@@ -6,16 +6,24 @@ import socket
 import ssl
 import time
 from urllib.parse import urljoin
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.config import load_settings
 from app.database import SessionFactory
-from app.models import Monitor, MonitorCheck, MonitorRun
+from app.models import (
+    Incident,
+    IncidentEvent,
+    Monitor,
+    MonitorCheck,
+    MonitorRun,
+    NotificationDelivery,
+    User,
+)
 from app.monitoring.state import apply_monitor_result, monitor_can_execute_request
 from app.security.monitor_destinations import (
     DestinationResolver,
@@ -67,6 +75,123 @@ class RequestAttemptError(RuntimeError):
         super().__init__()
         self.cause = cause
         self.response_time_ms = response_time_ms
+
+
+def _safe_incident_cause(check: MonitorCheck) -> tuple[str, str]:
+    if check.error_category and check.error_message:
+        return check.error_category, check.error_message
+    return (
+        "http_status",
+        "Monitor response was outside the expected status range.",
+    )
+
+
+async def _add_incident_opening(
+    session: AsyncSession,
+    *,
+    monitor: Monitor,
+    check: MonitorCheck,
+    owner_email: str,
+    occurred_at: datetime,
+) -> None:
+    active_incident_id = await session.scalar(
+        select(Incident.id).where(
+            Incident.monitor_id == monitor.id,
+            Incident.status.in_(("open", "acknowledged")),
+        )
+    )
+    if active_incident_id is not None:
+        monitor.status = "down"
+        return
+
+    cause_category, cause_message = _safe_incident_cause(check)
+    incident_id = uuid4()
+    incident = Incident(
+        id=incident_id,
+        monitor_id=monitor.id,
+        user_id=monitor.user_id,
+        status="open",
+        opened_at=occurred_at,
+        detected_at=occurred_at,
+        triggering_check=check,
+        cause_category=cause_category,
+        cause_message=cause_message,
+    )
+    session.add_all(
+        [
+            incident,
+            IncidentEvent(
+                incident=incident,
+                sequence_number=1,
+                event_type="opened",
+                occurred_at=occurred_at,
+                message=cause_message,
+            ),
+            NotificationDelivery(
+                user_id=monitor.user_id,
+                incident=incident,
+                event_type="incident_opened",
+                channel="email",
+                destination=owner_email,
+                status="pending",
+                deduplication_key=f"incident:{incident_id}:opened",
+            ),
+        ]
+    )
+
+
+async def _add_incident_resolution(
+    session: AsyncSession,
+    *,
+    monitor: Monitor,
+    check: MonitorCheck,
+    owner_email: str,
+    occurred_at: datetime,
+) -> None:
+    incident = await session.scalar(
+        select(Incident)
+        .where(
+            Incident.monitor_id == monitor.id,
+            Incident.status.in_(("open", "acknowledged")),
+        )
+        .with_for_update()
+    )
+    if incident is None:
+        return
+
+    next_sequence = (
+        await session.scalar(
+            select(func.coalesce(func.max(IncidentEvent.sequence_number), 0)).where(
+                IncidentEvent.incident_id == incident.id
+            )
+        )
+    ) + 1
+    incident.status = "resolved"
+    incident.resolved_at = occurred_at
+    incident.recovery_check = check
+    monitor.status = "up"
+    monitor.consecutive_failures = 0
+    monitor.consecutive_successes = 0
+    session.add_all(
+        [
+            IncidentEvent(
+                incident=incident,
+                sequence_number=next_sequence,
+                event_type="resolved",
+                occurred_at=occurred_at,
+                message="Monitor recovered after consecutive successful checks.",
+            ),
+            NotificationDelivery(
+                user_id=monitor.user_id,
+                incident=incident,
+                event_type="incident_recovered",
+                channel="email",
+                destination=owner_email,
+                status="pending",
+                deduplication_key=f"incident:{incident.id}:recovered",
+            ),
+        ]
+    )
 
 
 def create_http_client(timeout_seconds: float) -> httpx.AsyncClient:
@@ -310,7 +435,11 @@ async def _complete_run(
                     return MonitorExecutionResult("missing", False)
                 if run.status != "running":
                     return MonitorExecutionResult("skipped", False)
-                monitor = await session.get(Monitor, run.monitor_id)
+                monitor = await session.scalar(
+                    select(Monitor)
+                    .where(Monitor.id == run.monitor_id)
+                    .with_for_update()
+                )
                 if monitor is None:
                     return MonitorExecutionResult("missing", False)
                 existing_check = await session.scalar(
@@ -319,25 +448,50 @@ async def _complete_run(
                 if existing_check is not None:
                     return MonitorExecutionResult("skipped", False)
 
-                session.add(
-                    MonitorCheck(
-                        monitor_id=monitor.id,
-                        run_id=run.id,
-                        started_at=started_at,
-                        completed_at=completed_at,
-                        success=success,
-                        response_time_ms=response_time_ms,
-                        http_status_code=http_status_code,
-                        error_category=error_category,
-                        error_message=error_message,
-                        tls_expires_at=tls_expires_at,
-                    )
+                check = MonitorCheck(
+                    monitor_id=monitor.id,
+                    run_id=run.id,
+                    started_at=started_at,
+                    completed_at=completed_at,
+                    success=success,
+                    response_time_ms=response_time_ms,
+                    http_status_code=http_status_code,
+                    error_category=error_category,
+                    error_message=error_message,
+                    tls_expires_at=tls_expires_at,
                 )
+                session.add(check)
                 monitor.last_checked_at = completed_at
                 monitor.latest_response_time_ms = response_time_ms
                 monitor.latest_status_code = http_status_code
                 monitor.latest_tls_expires_at = tls_expires_at
-                apply_monitor_result(monitor, success=success)
+                transition = apply_monitor_result(monitor, success=success)
+                if transition == "incident_opened":
+                    owner_email = await session.scalar(
+                        select(User.email).where(User.id == monitor.user_id)
+                    )
+                    if owner_email is None:
+                        raise SQLAlchemyError("monitor owner is missing")
+                    await _add_incident_opening(
+                        session,
+                        monitor=monitor,
+                        check=check,
+                        owner_email=owner_email,
+                        occurred_at=completed_at,
+                    )
+                elif transition == "incident_recovery_ready":
+                    owner_email = await session.scalar(
+                        select(User.email).where(User.id == monitor.user_id)
+                    )
+                    if owner_email is None:
+                        raise SQLAlchemyError("monitor owner is missing")
+                    await _add_incident_resolution(
+                        session,
+                        monitor=monitor,
+                        check=check,
+                        owner_email=owner_email,
+                        occurred_at=completed_at,
+                    )
                 run.status = "completed"
                 run.completed_at = completed_at
                 return MonitorExecutionResult("completed", True)

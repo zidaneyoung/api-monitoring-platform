@@ -25,20 +25,27 @@ def monitor_can_execute_request(monitor: Monitor | None) -> bool:
     )
 
 
-def apply_monitor_result(monitor: Monitor, *, success: bool) -> None:
+def apply_monitor_result(monitor: Monitor, *, success: bool) -> str | None:
     """Update observable availability state without opening or resolving incidents."""
 
     if success:
         monitor.consecutive_failures = 0
         monitor.consecutive_successes += 1
-        if monitor.status == "unknown" or (
+        if monitor.status == "unknown":
+            monitor.status = "up"
+        if (
             monitor.status == "down"
             and monitor.consecutive_successes >= monitor.recovery_threshold
         ):
-            monitor.status = "up"
-        return
+            return "incident_recovery_ready"
+        return None
 
     monitor.consecutive_successes = 0
     monitor.consecutive_failures += 1
-    if monitor.status == "up" and monitor.consecutive_failures >= monitor.failure_threshold:
+    if (
+        monitor.status in {"unknown", "up"}
+        and monitor.consecutive_failures >= monitor.failure_threshold
+    ):
         monitor.status = "down"
+        return "incident_opened"
+    return None

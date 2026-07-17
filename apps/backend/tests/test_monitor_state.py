@@ -24,6 +24,86 @@ def monitor(*, status: str, enabled: bool, next_check_at: datetime | None) -> Mo
     )
 
 
+def test_new_monitor_state_defaults_are_unknown_zero_and_incident_free() -> None:
+    current = monitor(status="unknown", enabled=True, next_check_at=None)
+
+    assert current.status == "unknown"
+    assert current.consecutive_failures == 0
+    assert current.consecutive_successes == 0
+    assert current.incidents == []
+
+
+def test_first_success_transitions_unknown_monitor_to_up() -> None:
+    current = monitor(status="unknown", enabled=True, next_check_at=None)
+
+    apply_monitor_result(current, success=True)
+
+    assert current.status == "up"
+    assert current.consecutive_failures == 0
+    assert current.consecutive_successes == 1
+
+
+def test_first_failure_respects_configured_failure_threshold() -> None:
+    current = monitor(status="unknown", enabled=True, next_check_at=None)
+
+    apply_monitor_result(current, success=False)
+
+    assert current.status == "unknown"
+    assert current.consecutive_failures == 1
+    assert current.consecutive_successes == 0
+    assert current.incidents == []
+
+
+def test_first_failure_transitions_down_when_threshold_is_one() -> None:
+    current = monitor(status="unknown", enabled=True, next_check_at=None)
+    current.failure_threshold = 1
+
+    apply_monitor_result(current, success=False)
+
+    assert current.status == "down"
+    assert current.consecutive_failures == 1
+    assert current.consecutive_successes == 0
+
+
+def test_failure_sequence_increments_and_success_resets_counter() -> None:
+    current = monitor(status="unknown", enabled=True, next_check_at=None)
+    current.failure_threshold = 4
+
+    for expected_failures in range(1, 4):
+        apply_monitor_result(current, success=False)
+        assert current.consecutive_failures == expected_failures
+        assert current.status == "unknown"
+        assert current.incidents == []
+
+    apply_monitor_result(current, success=True)
+
+    assert current.status == "up"
+    assert current.consecutive_failures == 0
+    assert current.consecutive_successes == 1
+
+
+def test_down_monitor_tracks_interrupted_recovery_without_resolving() -> None:
+    current = monitor(status="down", enabled=True, next_check_at=None)
+    current.recovery_threshold = 2
+    current.consecutive_failures = 3
+
+    assert apply_monitor_result(current, success=True) is None
+    assert current.status == "down"
+    assert current.consecutive_failures == 0
+    assert current.consecutive_successes == 1
+
+    assert apply_monitor_result(current, success=False) is None
+    assert current.status == "down"
+    assert current.consecutive_failures == 1
+    assert current.consecutive_successes == 0
+
+    assert apply_monitor_result(current, success=True) is None
+    assert apply_monitor_result(current, success=True) == "incident_recovery_ready"
+    assert current.status == "down"
+    assert current.consecutive_failures == 0
+    assert current.consecutive_successes == 2
+
+
 def test_scheduler_contract_selects_only_enabled_due_non_paused_monitor() -> None:
     now = datetime.now(timezone.utc)
     active_due = monitor(status="up", enabled=True, next_check_at=now)
@@ -86,6 +166,6 @@ def test_monitor_result_transitions_unknown_up_down_and_recovered_states() -> No
 
     apply_monitor_result(current, success=True)
     assert current.status == "down"
-    apply_monitor_result(current, success=True)
-    assert current.status == "up"
+    assert apply_monitor_result(current, success=True) == "incident_recovery_ready"
+    assert current.status == "down"
     assert current.consecutive_successes == 2
