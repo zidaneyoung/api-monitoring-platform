@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 import logging
 
 from sqlalchemy import select
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.celery_app import celery_app
@@ -63,17 +63,25 @@ async def _schedule_due_monitors(
                     scheduled_for = monitor.next_check_at
                     if scheduled_for is None:
                         continue
-                    session.add(
-                        MonitorRun(
-                            monitor_id=monitor.id,
-                            scheduled_for=scheduled_for,
+                    try:
+                        async with session.begin_nested():
+                            session.add(
+                                MonitorRun(
+                                    monitor_id=monitor.id,
+                                    scheduled_for=scheduled_for,
+                                )
+                            )
+                            await session.flush()
+                    except IntegrityError:
+                        logger.warning(
+                            "monitor_scheduler_duplicate_run",
+                            extra={"monitor_id": str(monitor.id)},
                         )
-                    )
+                    else:
+                        scheduled += 1
                     monitor.next_check_at = scheduled_for + timedelta(
                         seconds=monitor.interval_seconds
                     )
-                    scheduled += 1
-                await session.flush()
     except SQLAlchemyError:
         logger.warning("monitor_scheduler_database_failure")
         return 0

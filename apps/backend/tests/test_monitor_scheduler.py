@@ -1,5 +1,6 @@
 import asyncio
 from datetime import datetime, timedelta, timezone
+import logging
 import os
 from uuid import UUID
 
@@ -210,6 +211,99 @@ def test_database_failure_does_not_advance_a_due_monitor() -> None:
             assert refreshed_monitor is not None
             assert refreshed_monitor.next_check_at == now
             assert runs == []
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_scheduler_recovers_from_a_preexisting_unique_run_conflict(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    async def scenario() -> None:
+        engine, sessions = await create_session_factory()
+        try:
+            await reset_database(sessions)
+            caplog.set_level(logging.WARNING, logger="app.monitoring.scheduler")
+            now = datetime(2026, 7, 17, 15, 0, tzinfo=timezone.utc)
+            monitor = await create_monitor(
+                sessions,
+                email="unique-conflict@example.com",
+                now=now,
+            )
+            async with sessions() as session:
+                existing_run = MonitorRun(
+                    monitor_id=monitor.id,
+                    scheduled_for=now,
+                )
+                session.add(existing_run)
+                await session.commit()
+                await session.refresh(existing_run)
+
+            queued: list[str] = []
+            result = await dispatch_due_monitors(
+                now=now,
+                session_factory=sessions,
+                enqueue=queued.append,
+            )
+            assert result.scheduled == 0
+            assert result.enqueued == 1
+            assert queued == [str(existing_run.id)]
+
+            async with sessions() as session:
+                runs = list((await session.scalars(select(MonitorRun))).all())
+                refreshed_monitor = await session.get(Monitor, monitor.id)
+            assert len(runs) == 1
+            assert runs[0].id == existing_run.id
+            assert runs[0].enqueued_at is not None
+            assert refreshed_monitor is not None
+            assert refreshed_monitor.next_check_at == now + timedelta(seconds=60)
+            assert "monitor_scheduler_duplicate_run" in caplog.messages
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_concurrent_scheduler_cycles_create_and_queue_one_run() -> None:
+    async def scenario() -> None:
+        engine, sessions = await create_session_factory()
+        try:
+            for attempt in range(3):
+                await reset_database(sessions)
+                now = datetime(2026, 7, 17, 16, attempt, tzinfo=timezone.utc)
+                monitor = await create_monitor(
+                    sessions,
+                    email=f"concurrent-{attempt}@example.com",
+                    now=now,
+                )
+                queued: list[str] = []
+
+                first, second = await asyncio.gather(
+                    dispatch_due_monitors(
+                        now=now,
+                        session_factory=sessions,
+                        enqueue=queued.append,
+                    ),
+                    dispatch_due_monitors(
+                        now=now,
+                        session_factory=sessions,
+                        enqueue=queued.append,
+                    ),
+                )
+
+                assert first.scheduled + second.scheduled == 1
+                assert first.enqueued + second.enqueued == 1
+                assert len(queued) == 1
+                async with sessions() as session:
+                    runs = list((await session.scalars(select(MonitorRun))).all())
+                    refreshed_monitor = await session.get(Monitor, monitor.id)
+                assert len(runs) == 1
+                assert str(runs[0].id) == queued[0]
+                assert runs[0].scheduled_for == now
+                assert runs[0].enqueued_at is not None
+                assert refreshed_monitor is not None
+                assert refreshed_monitor.next_check_at == now + timedelta(seconds=60)
         finally:
             await engine.dispose()
 
