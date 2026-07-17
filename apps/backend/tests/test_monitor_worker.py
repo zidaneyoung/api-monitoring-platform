@@ -854,6 +854,163 @@ def test_incident_opening_write_failure_rolls_back_complete_operation(
     asyncio.run(scenario())
 
 
+def test_continued_and_duplicate_failures_reuse_active_incident() -> None:
+    async def scenario() -> None:
+        engine, sessions = await create_session_factory()
+        try:
+            await reset_database(sessions)
+            monitor, first_run = await create_monitor_run(
+                sessions,
+                email="continued-failures@example.com",
+                failure_threshold=1,
+            )
+            second_run = await create_additional_run(sessions, monitor.id)
+
+            async def handler(_request: httpx.Request) -> httpx.Response:
+                return httpx.Response(500, content=b"failed")
+
+            for run in (first_run, second_run, second_run):
+                await execute_monitor_run(
+                    run.id,
+                    session_factory=sessions,
+                    destination_resolver=public_resolver,
+                    client_factory=client_factory(httpx.MockTransport(handler), []),
+                )
+
+            async with sessions() as session:
+                stale_monitor = await session.get(Monitor, monitor.id)
+                assert stale_monitor is not None
+                stale_monitor.status = "up"
+                await session.commit()
+            third_run = await create_additional_run(sessions, monitor.id)
+            stale_result = await execute_monitor_run(
+                third_run.id,
+                session_factory=sessions,
+                destination_resolver=public_resolver,
+                client_factory=client_factory(httpx.MockTransport(handler), []),
+            )
+            assert stale_result.status == "completed"
+
+            async with sessions() as session:
+                incidents = list((await session.scalars(select(Incident))).all())
+                events = list((await session.scalars(select(IncidentEvent))).all())
+                deliveries = list(
+                    (await session.scalars(select(NotificationDelivery))).all()
+                )
+                checks = list((await session.scalars(select(MonitorCheck))).all())
+                refreshed_monitor = await session.get(Monitor, monitor.id)
+            assert len(incidents) == 1
+            assert incidents[0].status == "open"
+            assert len(events) == 1
+            assert len(deliveries) == 1
+            assert len(checks) == 3
+            assert refreshed_monitor is not None
+            assert refreshed_monitor.status == "down"
+            assert refreshed_monitor.consecutive_failures == 3
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("attempt", range(3))
+def test_concurrent_threshold_workers_create_one_active_incident(attempt: int) -> None:
+    async def scenario() -> None:
+        engine, sessions = await create_session_factory()
+        try:
+            await reset_database(sessions)
+            monitor, first_run = await create_monitor_run(
+                sessions,
+                email=f"concurrent-{attempt}@example.com",
+                failure_threshold=1,
+            )
+            second_run = await create_additional_run(sessions, monitor.id)
+
+            async def handler(_request: httpx.Request) -> httpx.Response:
+                await asyncio.sleep(0.02)
+                return httpx.Response(500, content=b"failed")
+
+            results = await asyncio.gather(
+                *(
+                    execute_monitor_run(
+                        run.id,
+                        session_factory=sessions,
+                        destination_resolver=public_resolver,
+                        client_factory=client_factory(httpx.MockTransport(handler), []),
+                    )
+                    for run in (first_run, second_run)
+                )
+            )
+            assert [result.status for result in results] == ["completed", "completed"]
+
+            async with sessions() as session:
+                incidents = list((await session.scalars(select(Incident))).all())
+                events = list((await session.scalars(select(IncidentEvent))).all())
+                deliveries = list(
+                    (await session.scalars(select(NotificationDelivery))).all()
+                )
+                checks = list((await session.scalars(select(MonitorCheck))).all())
+            assert len(incidents) == 1
+            assert len(events) == 1
+            assert len(deliveries) == 1
+            assert len(checks) == 2
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_resolved_incident_history_survives_new_failure_sequence() -> None:
+    async def scenario() -> None:
+        engine, sessions = await create_session_factory()
+        try:
+            await reset_database(sessions)
+            monitor, run = await create_monitor_run(
+                sessions,
+                email="resolved-history@example.com",
+                failure_threshold=1,
+                status="up",
+            )
+            opened_at = datetime(2026, 7, 17, 10, 0, tzinfo=timezone.utc)
+            async with sessions() as session:
+                session.add(
+                    Incident(
+                        monitor_id=monitor.id,
+                        user_id=monitor.user_id,
+                        status="resolved",
+                        opened_at=opened_at,
+                        detected_at=opened_at,
+                        resolved_at=opened_at,
+                    )
+                )
+                await session.commit()
+
+            async def handler(_request: httpx.Request) -> httpx.Response:
+                return httpx.Response(500, content=b"failed")
+
+            result = await execute_monitor_run(
+                run.id,
+                session_factory=sessions,
+                destination_resolver=public_resolver,
+                client_factory=client_factory(httpx.MockTransport(handler), []),
+            )
+            assert result.status == "completed"
+
+            async with sessions() as session:
+                incidents = list(
+                    (
+                        await session.scalars(
+                            select(Incident).order_by(Incident.opened_at)
+                        )
+                    ).all()
+                )
+            assert [incident.status for incident in incidents] == ["resolved", "open"]
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
 def test_worker_validates_each_redirect_and_records_final_response() -> None:
     async def scenario() -> None:
         engine, sessions = await create_session_factory()

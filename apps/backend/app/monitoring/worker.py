@@ -86,7 +86,7 @@ def _safe_incident_cause(check: MonitorCheck) -> tuple[str, str]:
     )
 
 
-def _add_incident_opening(
+async def _add_incident_opening(
     session: AsyncSession,
     *,
     monitor: Monitor,
@@ -94,6 +94,16 @@ def _add_incident_opening(
     owner_email: str,
     occurred_at: datetime,
 ) -> None:
+    active_incident_id = await session.scalar(
+        select(Incident.id).where(
+            Incident.monitor_id == monitor.id,
+            Incident.status.in_(("open", "acknowledged")),
+        )
+    )
+    if active_incident_id is not None:
+        monitor.status = "down"
+        return
+
     cause_category, cause_message = _safe_incident_cause(check)
     incident_id = uuid4()
     incident = Incident(
@@ -408,7 +418,7 @@ async def _complete_run(
                     )
                     if owner_email is None:
                         raise SQLAlchemyError("monitor owner is missing")
-                    _add_incident_opening(
+                    await _add_incident_opening(
                         session,
                         monitor=monitor,
                         check=check,
