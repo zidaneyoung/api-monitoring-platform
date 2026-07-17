@@ -310,7 +310,11 @@ async def _complete_run(
                     return MonitorExecutionResult("missing", False)
                 if run.status != "running":
                     return MonitorExecutionResult("skipped", False)
-                monitor = await session.get(Monitor, run.monitor_id)
+                monitor = await session.scalar(
+                    select(Monitor)
+                    .where(Monitor.id == run.monitor_id)
+                    .with_for_update()
+                )
                 if monitor is None:
                     return MonitorExecutionResult("missing", False)
                 existing_check = await session.scalar(

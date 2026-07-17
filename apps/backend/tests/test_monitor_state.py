@@ -65,6 +65,23 @@ def test_first_failure_transitions_down_when_threshold_is_one() -> None:
     assert current.consecutive_successes == 0
 
 
+def test_failure_sequence_increments_and_success_resets_counter() -> None:
+    current = monitor(status="unknown", enabled=True, next_check_at=None)
+    current.failure_threshold = 4
+
+    for expected_failures in range(1, 4):
+        apply_monitor_result(current, success=False)
+        assert current.consecutive_failures == expected_failures
+        assert current.status == "unknown"
+        assert current.incidents == []
+
+    apply_monitor_result(current, success=True)
+
+    assert current.status == "up"
+    assert current.consecutive_failures == 0
+    assert current.consecutive_successes == 1
+
+
 def test_scheduler_contract_selects_only_enabled_due_non_paused_monitor() -> None:
     now = datetime.now(timezone.utc)
     active_due = monitor(status="up", enabled=True, next_check_at=now)

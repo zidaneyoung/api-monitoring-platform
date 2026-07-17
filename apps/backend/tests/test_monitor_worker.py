@@ -16,7 +16,8 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from app.celery_app import celery_app
 from app.config import load_settings
 from app.database import create_database_engine
-from app.models import Monitor, MonitorCheck, MonitorRun, User
+from app.models import Incident, Monitor, MonitorCheck, MonitorRun, User
+from app.monitoring import worker
 from app.monitoring.worker import execute_monitor_run, normalize_monitor_error
 
 
@@ -51,6 +52,7 @@ async def create_monitor_run(
     timeout_seconds: int = 10,
     expected_status_min: int = 200,
     expected_status_max: int = 399,
+    failure_threshold: int = 3,
     enabled: bool = True,
     status: str = "unknown",
 ) -> tuple[Monitor, MonitorRun]:
@@ -64,6 +66,7 @@ async def create_monitor_run(
             timeout_seconds=timeout_seconds,
             expected_status_min=expected_status_min,
             expected_status_max=expected_status_max,
+            failure_threshold=failure_threshold,
             is_enabled=enabled,
             status=status,
             next_check_at=datetime.now(timezone.utc),
@@ -605,6 +608,96 @@ def test_repeated_worker_delivery_creates_one_check_and_one_result_update() -> N
             assert refreshed_monitor is not None
             assert refreshed_monitor.status == "up"
             assert refreshed_monitor.consecutive_successes == 1
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_repeated_failed_delivery_increments_failure_counter_once() -> None:
+    async def scenario() -> None:
+        engine, sessions = await create_session_factory()
+        try:
+            await reset_database(sessions)
+            monitor, run = await create_monitor_run(
+                sessions,
+                email="failed-idempotent@example.com",
+                failure_threshold=3,
+            )
+
+            async def handler(_request: httpx.Request) -> httpx.Response:
+                await asyncio.sleep(0.02)
+                return httpx.Response(500, content=b"failed")
+
+            results = await asyncio.gather(
+                *(
+                    execute_monitor_run(
+                        run.id,
+                        session_factory=sessions,
+                        destination_resolver=public_resolver,
+                        client_factory=client_factory(httpx.MockTransport(handler), []),
+                    )
+                    for _ in range(2)
+                )
+            )
+
+            assert sorted(result.status for result in results) == [
+                "completed",
+                "skipped",
+            ]
+            async with sessions() as session:
+                checks = list((await session.scalars(select(MonitorCheck))).all())
+                incidents = list((await session.scalars(select(Incident))).all())
+                refreshed_monitor = await session.get(Monitor, monitor.id)
+            assert len(checks) == 1
+            assert incidents == []
+            assert refreshed_monitor is not None
+            assert refreshed_monitor.status == "unknown"
+            assert refreshed_monitor.consecutive_failures == 1
+            assert refreshed_monitor.consecutive_successes == 0
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_failed_counter_update_rolls_back_check_and_monitor_changes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        engine, sessions = await create_session_factory()
+        try:
+            await reset_database(sessions)
+            monitor, run = await create_monitor_run(
+                sessions,
+                email="counter-rollback@example.com",
+            )
+
+            def apply_invalid_counter(current: Monitor, *, success: bool) -> None:
+                assert success is False
+                current.consecutive_failures = -1
+
+            monkeypatch.setattr(worker, "apply_monitor_result", apply_invalid_counter)
+
+            async def handler(_request: httpx.Request) -> httpx.Response:
+                return httpx.Response(500, content=b"failed")
+
+            result = await execute_monitor_run(
+                run.id,
+                session_factory=sessions,
+                destination_resolver=public_resolver,
+                client_factory=client_factory(httpx.MockTransport(handler), []),
+            )
+
+            assert result.status == "failed"
+            assert result.check_created is False
+            async with sessions() as session:
+                checks = list((await session.scalars(select(MonitorCheck))).all())
+                refreshed_monitor = await session.get(Monitor, monitor.id)
+            assert checks == []
+            assert refreshed_monitor is not None
+            assert refreshed_monitor.consecutive_failures == 0
+            assert refreshed_monitor.consecutive_successes == 0
         finally:
             await engine.dispose()
 
