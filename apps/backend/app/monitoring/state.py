@@ -40,5 +40,8 @@ def apply_monitor_result(monitor: Monitor, *, success: bool) -> None:
 
     monitor.consecutive_successes = 0
     monitor.consecutive_failures += 1
-    if monitor.status == "up" and monitor.consecutive_failures >= monitor.failure_threshold:
+    if (
+        monitor.status in {"unknown", "up"}
+        and monitor.consecutive_failures >= monitor.failure_threshold
+    ):
         monitor.status = "down"
