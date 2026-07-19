@@ -5,14 +5,13 @@ import {
   PlusIcon,
 } from "lucide-react"
 
-import { mockMonitors, type Monitor } from "@/app/monitors/monitor-data"
 import { EmptyState, ErrorState, LoadingState } from "@/components/states"
-import { StatusBadge } from "@/components/status-badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 
 import { ActiveIncidents } from "./active-incidents"
 import { MonitorSummary } from "./monitor-summary"
+import { RecentMonitors } from "./recent-monitors"
 
 type PageProps = {
   searchParams: Promise<{ state?: string | string[] }>
@@ -34,34 +33,6 @@ function normalizeState(value: string | string[] | undefined): DashboardState {
 
 function DashboardShell({ children }: { children: React.ReactNode }) {
   return <div className="min-h-full bg-muted/40">{children}</div>
-}
-
-function RecentMonitors({ monitors }: { monitors: Monitor[] }) {
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Recent monitors</CardTitle>
-        <CardDescription>Latest checks across monitored endpoints.</CardDescription>
-      </CardHeader>
-      <CardContent className="divide-y">
-        {monitors.map((monitor) => (
-          <div key={monitor.id} className="flex flex-col gap-3 py-4 first:pt-0 last:pb-0 sm:flex-row sm:items-center sm:justify-between">
-            <div className="min-w-0">
-              <Link href="/monitors" className="font-medium hover:underline">{monitor.name}</Link>
-              <p className="mt-0.5 truncate text-sm text-muted-foreground">{monitor.url}</p>
-            </div>
-            <div className="flex items-center gap-4 sm:justify-end">
-              <div className="text-right text-sm">
-                <div className="font-medium">{monitor.responseTime}</div>
-                <div className="text-muted-foreground">{monitor.lastCheck}</div>
-              </div>
-              <StatusBadge status={monitor.status} />
-            </div>
-          </div>
-        ))}
-      </CardContent>
-    </Card>
-  )
 }
 
 function ResponseTimeOverview() {
@@ -88,7 +59,7 @@ function DashboardReady() {
     <div className="grid gap-6">
       <MonitorSummary />
       <div className="grid gap-6 xl:grid-cols-2">
-        <RecentMonitors monitors={mockMonitors} />
+        <RecentMonitors />
         <ActiveIncidents />
         <ResponseTimeOverview />
       </div>

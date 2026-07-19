@@ -596,6 +596,33 @@ def test_monitor_list_returns_only_owner_configuration_and_latest_fields() -> No
     assert all("consecutive_failures" not in item for item in body["items"])
 
 
+def test_monitor_list_returns_every_supported_persisted_state() -> None:
+    owner, _ = asyncio.run(reset_users_and_create_two())
+    asyncio.run(
+        add_monitors(
+            owner.id,
+            ["Unknown", "Up", "Down", "Paused"],
+            statuses=["unknown", "up", "down", "paused"],
+        )
+    )
+    app.dependency_overrides[get_database_session] = override_database_session
+    app.dependency_overrides[require_authenticated_session] = authenticated_as(owner)
+    try:
+        with TestClient(app) as client:
+            response = client.get("/monitors?page=1&page_size=10")
+    finally:
+        app.dependency_overrides.pop(get_database_session, None)
+        app.dependency_overrides.pop(require_authenticated_session, None)
+
+    assert response.status_code == 200
+    assert {item["status"] for item in response.json()["items"]} == {
+        "unknown",
+        "up",
+        "down",
+        "paused",
+    }
+
+
 def test_monitor_list_pagination_is_stable_and_excludes_foreign_rows() -> None:
     owner, other = asyncio.run(reset_users_and_create_two())
     owner_ids = set(
