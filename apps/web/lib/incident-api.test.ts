@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import {
   formatIncidentDuration,
   getIncident,
+  listAllActiveIncidents,
   listIncidents,
 } from "@/lib/incident-api"
 
@@ -55,6 +56,25 @@ describe("listIncidents", () => {
 
     await expect(listIncidents("open", 1, 10)).resolves.toEqual({ type: "success", data: page })
     expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe("listAllActiveIncidents", () => {
+  it("loads every active incident page and returns a count matching the items", async () => {
+    const secondItem = { ...listItem, id: "incident-2", monitor_name: "Billing API" }
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ items: [listItem], page: 1, page_size: 100, total: 2, pages: 2 }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ items: [secondItem], page: 2, page_size: 100, total: 2, pages: 2 }), { status: 200 }))
+    vi.stubGlobal("fetch", fetchMock)
+
+    await expect(listAllActiveIncidents()).resolves.toEqual({
+      type: "success",
+      data: { items: [listItem, secondItem], page: 1, page_size: 2, total: 2, pages: 1 },
+    })
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "http://localhost:8000/incidents?status=open&page=1&page_size=100",
+      "http://localhost:8000/incidents?status=open&page=2&page_size=100",
+    ])
   })
 })
 

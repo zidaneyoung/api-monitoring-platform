@@ -221,7 +221,13 @@ def test_incident_list_is_owned_ordered_and_paginated() -> None:
     assert second_page.json()["items"][0]["id"] == str(incident_ids["active"])
     assert second_page.json()["items"][0]["duration_seconds"] >= 0
     assert open_page.json()["total"] == 1
-    assert open_page.json()["items"][0]["id"] == str(incident_ids["active"])
+    active_item = open_page.json()["items"][0]
+    assert active_item["id"] == str(incident_ids["active"])
+    assert active_item["monitor_name"] == "Owned open"
+    assert active_item["status"] == "open"
+    assert active_item["resolved_at"] is None
+    assert active_item["opened_at"] == "2026-07-09T08:00:00Z"
+    assert active_item["duration_seconds"] >= 0
     assert resolved_page.json()["total"] == 1
     assert resolved_page.json()["items"][0]["id"] == str(incident_ids["resolved"])
 

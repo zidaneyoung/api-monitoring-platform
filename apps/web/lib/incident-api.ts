@@ -178,6 +178,32 @@ export async function listIncidents(
   }, options.signal)
 }
 
+export async function listAllActiveIncidents(
+  options: IncidentReadOptions = {},
+): Promise<IncidentOutcome<IncidentListDto>> {
+  const items: IncidentListItemDto[] = []
+  let page = 1
+
+  while (true) {
+    const outcome = await listIncidents("open", page, 100, options)
+    if (outcome.type !== "success") return outcome
+    items.push(...outcome.data.items)
+    if (page >= outcome.data.pages) break
+    page += 1
+  }
+
+  return {
+    type: "success",
+    data: {
+      items,
+      page: 1,
+      page_size: Math.max(1, items.length),
+      total: items.length,
+      pages: 1,
+    },
+  }
+}
+
 export async function getIncident(
   incidentId: string,
   options: IncidentReadOptions = {},
