@@ -247,6 +247,38 @@ async def add_recent_checks(monitor_id: UUID) -> list[UUID]:
         await engine.dispose()
 
 
+async def add_response_time_series(monitor_id: UUID) -> None:
+    engine = create_database_engine(database_url())
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    now = datetime.now(timezone.utc)
+    try:
+        async with sessions() as session:
+            session.add_all(
+                [
+                    MonitorCheck(
+                        monitor_id=monitor_id,
+                        started_at=completed_at - timedelta(milliseconds=100),
+                        completed_at=completed_at,
+                        success=response_time_ms is not None,
+                        response_time_ms=response_time_ms,
+                        http_status_code=200 if response_time_ms is not None else None,
+                        error_category=(
+                            None if response_time_ms is not None else "connection"
+                        ),
+                    )
+                    for completed_at, response_time_ms in [
+                        (now - timedelta(hours=1), 95),
+                        (now - timedelta(hours=3), 120),
+                        (now - timedelta(hours=2), None),
+                        (now - timedelta(hours=25), 999),
+                    ]
+                ]
+            )
+            await session.commit()
+    finally:
+        await engine.dispose()
+
+
 async def monitor_history_ids(monitor_id: UUID) -> tuple[list[UUID], list[UUID]]:
     engine = create_database_engine(database_url())
     sessions = async_sessionmaker(engine, expire_on_commit=False)
@@ -784,6 +816,55 @@ def test_recent_checks_are_owned_newest_first_paginated_safe_and_nullable() -> N
         "total": 0,
         "pages": 1,
     }
+
+
+def test_response_time_series_requires_authentication() -> None:
+    app.dependency_overrides[get_database_session] = override_database_session
+    try:
+        with TestClient(app) as client:
+            response = client.get(f"/monitors/{uuid4()}/response-times")
+    finally:
+        app.dependency_overrides.pop(get_database_session, None)
+
+    assert response.status_code == 401
+
+
+def test_response_time_series_is_owned_persisted_chronological_and_nullable() -> None:
+    owner, other = asyncio.run(reset_users_and_create_two())
+    owned_id = asyncio.run(add_monitors(owner.id, ["Owned chart"]))[0]
+    empty_id = asyncio.run(add_monitors(owner.id, ["Empty chart"]))[0]
+    foreign_id = asyncio.run(add_monitors(other.id, ["Foreign chart"]))[0]
+    asyncio.run(add_response_time_series(owned_id))
+    asyncio.run(add_response_time_series(foreign_id))
+    app.dependency_overrides[get_database_session] = override_database_session
+    app.dependency_overrides[require_authenticated_session] = authenticated_as(owner)
+    try:
+        with TestClient(app) as client:
+            response = client.get(
+                f"/monitors/{owned_id}/response-times?range=24h"
+            )
+            empty = client.get(f"/monitors/{empty_id}/response-times")
+            foreign = client.get(f"/monitors/{foreign_id}/response-times")
+    finally:
+        app.dependency_overrides.pop(get_database_session, None)
+        app.dependency_overrides.pop(require_authenticated_session, None)
+
+    assert response.status_code == empty.status_code == 200
+    assert foreign.status_code == 404
+    body = response.json()
+    assert body["range"] == "24h"
+    assert datetime.fromisoformat(body["ended_at"]) - datetime.fromisoformat(
+        body["started_at"]
+    ) == timedelta(hours=24)
+    assert [point["response_time_ms"] for point in body["points"]] == [
+        120,
+        None,
+        95,
+    ]
+    assert [point["success"] for point in body["points"]] == [True, False, True]
+    completed = [point["completed_at"] for point in body["points"]]
+    assert completed == sorted(completed)
+    assert empty.json()["points"] == []
 
 
 def test_monitor_list_pagination_is_stable_and_excludes_foreign_rows() -> None:

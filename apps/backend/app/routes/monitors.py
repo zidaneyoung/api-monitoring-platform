@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from typing import Literal
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
@@ -14,6 +15,8 @@ from app.schemas.monitor import (
     MonitorCheckListResponse,
     MonitorListResponse,
     MonitorResponse,
+    MonitorResponseTimePoint,
+    MonitorResponseTimeSeriesResponse,
     MonitorSummaryResponse,
     MonitorUpdate,
 )
@@ -176,6 +179,43 @@ async def list_monitor_checks(
         page=page,
         page_size=page_size,
         total=total or 0,
+    )
+
+
+@router.get(
+    "/{monitor_id}/response-times",
+    response_model=MonitorResponseTimeSeriesResponse,
+    responses={
+        status.HTTP_401_UNAUTHORIZED: {"description": "Authentication required."},
+        status.HTTP_404_NOT_FOUND: {"description": "Monitor not found."},
+    },
+)
+async def get_monitor_response_times(
+    monitor_id: UUID,
+    selected_range: Literal["24h"] = Query(default="24h", alias="range"),
+    authenticated: AuthenticatedSession = Depends(require_authenticated_session),
+    session: AsyncSession = Depends(get_database_session),
+) -> MonitorResponseTimeSeriesResponse:
+    await _owned_monitor(session, monitor_id, authenticated.user.id)
+    ended_at = datetime.now(timezone.utc)
+    started_at = ended_at - timedelta(hours=24)
+    result = await session.execute(
+        select(MonitorCheck)
+        .where(
+            MonitorCheck.monitor_id == monitor_id,
+            MonitorCheck.completed_at >= started_at,
+            MonitorCheck.completed_at <= ended_at,
+        )
+        .order_by(MonitorCheck.completed_at.asc(), MonitorCheck.id.asc())
+    )
+    return MonitorResponseTimeSeriesResponse(
+        range=selected_range,
+        started_at=started_at,
+        ended_at=ended_at,
+        points=[
+            MonitorResponseTimePoint.model_validate(check)
+            for check in result.scalars()
+        ],
     )
 
 

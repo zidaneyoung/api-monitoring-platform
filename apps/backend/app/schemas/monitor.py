@@ -133,3 +133,18 @@ class MonitorCheckListResponse(BaseModel):
             total=total,
             pages=max(1, ceil(total / page_size)),
         )
+
+
+class MonitorResponseTimePoint(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    completed_at: datetime
+    response_time_ms: int | None
+    success: bool
+
+
+class MonitorResponseTimeSeriesResponse(BaseModel):
+    range: Literal["24h"]
+    started_at: datetime
+    ended_at: datetime
+    points: list[MonitorResponseTimePoint]

@@ -1,5 +1,6 @@
 import { MonitorDetails } from "./monitor-details"
 import { RecentChecks } from "./recent-checks"
+import { ResponseTimeChart } from "./response-time-chart"
 import { safeMonitorReturnHref } from "@/lib/monitor-navigation"
 
 
@@ -15,6 +16,9 @@ export default async function MonitorDetailsPage({
   return (
     <>
       <MonitorDetails monitorId={monitorId} returnHref={returnHref} />
+      <section aria-label="Monitor response-time history" className="mx-auto w-full max-w-6xl px-4 pb-8 sm:px-6 lg:px-8">
+        <ResponseTimeChart monitorId={monitorId} />
+      </section>
       <section aria-label="Monitor check history" className="mx-auto w-full max-w-6xl px-4 pb-8 sm:px-6 lg:px-8">
         <RecentChecks monitorId={monitorId} />
       </section>
