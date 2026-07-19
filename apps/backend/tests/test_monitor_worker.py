@@ -544,6 +544,7 @@ def test_worker_records_null_response_time_when_request_never_starts() -> None:
             assert refreshed_monitor is not None
             assert refreshed_monitor.latest_response_time_ms is None
             assert refreshed_monitor.latest_status_code is None
+            assert refreshed_monitor.latest_error_category == "unsafe_destination"
             assert refreshed_monitor.latest_tls_expires_at is None
         finally:
             await engine.dispose()

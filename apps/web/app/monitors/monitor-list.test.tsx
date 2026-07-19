@@ -28,6 +28,7 @@ const unknownMonitor: MonitorDto = {
   last_checked_at: null,
   latest_response_time_ms: null,
   latest_status_code: null,
+  latest_error_category: null,
 }
 
 const pausedMonitor: MonitorDto = {
@@ -86,6 +87,22 @@ describe("MonitorList", () => {
     fetchMock.mockResolvedValue(responsePage({ items: [], total: 0 }))
     render(<MonitorList />)
     expect(await screen.findByText("No monitors yet")).toBeTruthy()
+  })
+
+  it("renders a safe normalized error when no response values exist", async () => {
+    fetchMock.mockResolvedValue(responsePage({
+      items: [{
+        ...unknownMonitor,
+        name: "Failed API",
+        last_checked_at: "2026-07-18T12:30:00Z",
+        latest_error_category: "connection",
+      }],
+      total: 1,
+    }))
+    render(<MonitorList />)
+
+    expect((await screen.findAllByText("Failed API")).length).toBeGreaterThan(0)
+    expect(screen.getAllByText("Connection failure").length).toBeGreaterThan(0)
   })
 
   it("renders a controlled error and retries", async () => {

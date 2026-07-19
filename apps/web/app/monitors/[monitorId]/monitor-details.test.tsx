@@ -29,6 +29,7 @@ const monitor: MonitorDto = {
   last_checked_at: "2026-07-16T18:55:00Z",
   latest_response_time_ms: 125,
   latest_status_code: 204,
+  latest_error_category: null,
 }
 
 beforeEach(() => {
@@ -59,7 +60,10 @@ describe("MonitorDetails", () => {
     expect(screen.getByText("Schedule configuration")).toBeTruthy()
     expect(screen.getByText("Success criteria")).toBeTruthy()
     expect(screen.getByText("Available actions")).toBeTruthy()
-    expect(screen.queryByText("125 ms")).toBeNull()
+    expect(screen.getByText("Latest check")).toBeTruthy()
+    expect(screen.getByText("125 ms")).toBeTruthy()
+    expect(screen.getByText("204")).toBeTruthy()
+    expect(screen.getByText("UTC: 2026-07-16T18:55:00Z")).toBeTruthy()
     expect(screen.queryByText("No check history loaded.")).toBeNull()
     expect(screen.getByRole("link", { name: "Edit monitor" }).getAttribute("href")).toBe("/monitors/monitor-owned/edit?return_to=%2Fmonitors%3Fpage%3D3%26page_size%3D25")
     expect(screen.getByRole("link", { name: "Back to monitors" }).getAttribute("href")).toBe(returnHref)

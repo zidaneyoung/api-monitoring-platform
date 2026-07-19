@@ -17,6 +17,7 @@ export type MonitorDto = {
   last_checked_at: string | null
   latest_response_time_ms: number | null
   latest_status_code: number | null
+  latest_error_category: string | null
 }
 
 export type MonitorCreatePayload = Omit<
@@ -27,11 +28,37 @@ export type MonitorCreatePayload = Omit<
   | "last_checked_at"
   | "latest_response_time_ms"
   | "latest_status_code"
+  | "latest_error_category"
 >
 export type MonitorUpdatePayload = MonitorCreatePayload
 
 export type MonitorListDto = {
   items: MonitorDto[]
+  page: number
+  page_size: number
+  total: number
+  pages: number
+}
+
+export type MonitorSummaryDto = {
+  total: number
+  up: number
+  down: number
+  paused: number
+  unknown: number
+}
+
+export type MonitorCheckDto = {
+  id: string
+  success: boolean
+  completed_at: string
+  response_time_ms: number | null
+  http_status_code: number | null
+  error_category: string | null
+}
+
+export type MonitorCheckListDto = {
+  items: MonitorCheckDto[]
   page: number
   page_size: number
   total: number
@@ -138,6 +165,43 @@ async function readMonitorList(response: Response): Promise<MonitorListDto | nul
       && typeof value.total === "number"
       && typeof value.pages === "number"
       ? value as MonitorListDto
+      : null
+  } catch {
+    return null
+  }
+}
+
+async function readMonitorSummary(response: Response): Promise<MonitorSummaryDto | null> {
+  try {
+    const value = await response.json() as Partial<MonitorSummaryDto>
+    const counts = [value.up, value.down, value.paused, value.unknown]
+    return typeof value.total === "number"
+      && counts.every((count) => typeof count === "number" && count >= 0)
+      && value.total === counts.reduce<number>((total, count) => total + (count ?? 0), 0)
+      ? value as MonitorSummaryDto
+      : null
+  } catch {
+    return null
+  }
+}
+
+async function readMonitorCheckList(response: Response): Promise<MonitorCheckListDto | null> {
+  try {
+    const value = await response.json() as Partial<MonitorCheckListDto>
+    return Array.isArray(value.items)
+      && value.items.every((item) => (
+        typeof item?.id === "string"
+        && typeof item.success === "boolean"
+        && typeof item.completed_at === "string"
+        && (typeof item.response_time_ms === "number" || item.response_time_ms === null)
+        && (typeof item.http_status_code === "number" || item.http_status_code === null)
+        && (typeof item.error_category === "string" || item.error_category === null)
+      ))
+      && typeof value.page === "number"
+      && typeof value.page_size === "number"
+      && typeof value.total === "number"
+      && typeof value.pages === "number"
+      ? value as MonitorCheckListDto
       : null
   } catch {
     return null
@@ -264,6 +328,62 @@ export async function listMonitors(
         const monitors = await readMonitorList(response)
         return monitors
           ? { type: "success", data: monitors }
+          : { type: "unexpected_response" }
+      }
+      return responseFailure(response.status)
+    } catch (error) {
+      return requestFailure(error, options.signal)
+    }
+  }, options.signal)
+}
+
+export async function getMonitorSummary(
+  options: MonitorReadOptions = {},
+): Promise<MonitorOutcome<MonitorSummaryDto>> {
+  return readWithOneRetry(async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/monitors/summary`, {
+        method: "GET",
+        credentials: "include",
+        cache: "no-store",
+        signal: requestSignal(options.signal),
+      })
+
+      if (response.ok) {
+        const summary = await readMonitorSummary(response)
+        return summary
+          ? { type: "success", data: summary }
+          : { type: "unexpected_response" }
+      }
+      return responseFailure(response.status)
+    } catch (error) {
+      return requestFailure(error, options.signal)
+    }
+  }, options.signal)
+}
+
+export async function listRecentChecks(
+  monitorId: string,
+  page: number,
+  pageSize: number,
+  options: MonitorReadOptions = {},
+): Promise<MonitorOutcome<MonitorCheckListDto>> {
+  const query = new URLSearchParams({
+    page: String(page),
+    page_size: String(pageSize),
+  })
+  return readWithOneRetry(async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/monitors/${encodeURIComponent(monitorId)}/checks?${query}`, {
+        method: "GET",
+        credentials: "include",
+        cache: "no-store",
+        signal: requestSignal(options.signal),
+      })
+      if (response.ok) {
+        const checks = await readMonitorCheckList(response)
+        return checks
+          ? { type: "success", data: checks }
           : { type: "unexpected_response" }
       }
       return responseFailure(response.status)

@@ -60,6 +60,7 @@ class MonitorResponse(BaseModel):
     last_checked_at: datetime | None
     latest_response_time_ms: int | None
     latest_status_code: int | None
+    latest_error_category: str | None
     latest_tls_expires_at: datetime | None
 
 
@@ -81,6 +82,52 @@ class MonitorListResponse(BaseModel):
     ) -> "MonitorListResponse":
         return cls(
             items=[MonitorResponse.model_validate(item) for item in items],
+            page=page,
+            page_size=page_size,
+            total=total,
+            pages=max(1, ceil(total / page_size)),
+        )
+
+
+class MonitorSummaryResponse(BaseModel):
+    """Counts for every persisted monitor; total equals all four state counts."""
+
+    total: int = Field(ge=0)
+    up: int = Field(ge=0)
+    down: int = Field(ge=0)
+    paused: int = Field(ge=0)
+    unknown: int = Field(ge=0)
+
+
+class MonitorCheckResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    success: bool
+    completed_at: datetime
+    response_time_ms: int | None
+    http_status_code: int | None
+    error_category: str | None
+
+
+class MonitorCheckListResponse(BaseModel):
+    items: list[MonitorCheckResponse]
+    page: int
+    page_size: int
+    total: int
+    pages: int
+
+    @classmethod
+    def from_items(
+        cls,
+        *,
+        items: list[object],
+        page: int,
+        page_size: int,
+        total: int,
+    ) -> "MonitorCheckListResponse":
+        return cls(
+            items=[MonitorCheckResponse.model_validate(item) for item in items],
             page=page,
             page_size=page_size,
             total=total,

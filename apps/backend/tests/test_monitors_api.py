@@ -1,7 +1,7 @@
 import asyncio
 import os
 from collections.abc import AsyncIterator
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 import pytest
@@ -134,6 +134,7 @@ async def add_monitors(
                     ),
                     latest_response_time_ms=125 if index % 2 else None,
                     latest_status_code=204 if index % 2 else None,
+                    latest_error_category=None,
                 )
                 for index, name in enumerate(names)
             ]
@@ -169,6 +170,79 @@ async def add_monitor_history(monitor_id: UUID, user_id: UUID) -> tuple[UUID, UU
             session.add_all([check, incident])
             await session.commit()
             return check.id, incident.id
+    finally:
+        await engine.dispose()
+
+
+async def add_latest_check_results(monitor_ids: list[UUID]) -> datetime:
+    engine = create_database_engine(database_url())
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    completed_at = datetime(2026, 7, 18, 12, 30, tzinfo=timezone.utc)
+    try:
+        async with sessions() as session:
+            successful = await session.get(Monitor, monitor_ids[0])
+            failed = await session.get(Monitor, monitor_ids[1])
+            assert successful is not None and failed is not None
+            successful.last_checked_at = completed_at
+            successful.latest_response_time_ms = 123
+            successful.latest_status_code = 204
+            successful.latest_error_category = None
+            failed.last_checked_at = completed_at + timedelta(minutes=1)
+            failed.latest_response_time_ms = None
+            failed.latest_status_code = None
+            failed.latest_error_category = "connection"
+            session.add_all(
+                [
+                    MonitorCheck(
+                        monitor_id=successful.id,
+                        started_at=completed_at - timedelta(milliseconds=123),
+                        completed_at=completed_at,
+                        success=True,
+                        response_time_ms=123,
+                        http_status_code=204,
+                    ),
+                    MonitorCheck(
+                        monitor_id=failed.id,
+                        started_at=completed_at,
+                        completed_at=completed_at + timedelta(minutes=1),
+                        success=False,
+                        response_time_ms=None,
+                        http_status_code=None,
+                        error_category="connection",
+                        error_message="Monitor connection failed.",
+                    ),
+                ]
+            )
+            await session.commit()
+            return completed_at
+    finally:
+        await engine.dispose()
+
+
+async def add_recent_checks(monitor_id: UUID) -> list[UUID]:
+    engine = create_database_engine(database_url())
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    base = datetime(2026, 7, 18, 14, 0, tzinfo=timezone.utc)
+    try:
+        async with sessions() as session:
+            checks = [
+                MonitorCheck(
+                    monitor_id=monitor_id,
+                    started_at=base + timedelta(minutes=index),
+                    completed_at=base + timedelta(minutes=index, seconds=1),
+                    success=index != 1,
+                    response_time_ms=None if index == 1 else 100 + index,
+                    http_status_code=None if index == 1 else 200 + index,
+                    error_category="connection" if index == 1 else None,
+                    error_message=(
+                        "Monitor connection failed." if index == 1 else None
+                    ),
+                )
+                for index in range(3)
+            ]
+            session.add_all(checks)
+            await session.commit()
+            return [check.id for check in checks]
     finally:
         await engine.dispose()
 
@@ -249,6 +323,7 @@ def test_authenticated_monitor_creation_sets_owner_and_initial_state(
     assert body["last_checked_at"] is None
     assert body["latest_response_time_ms"] is None
     assert body["latest_status_code"] is None
+    assert body["latest_error_category"] is None
     assert "user_id" not in body
     assert "is_enabled" not in body
     assert "consecutive_failures" not in body
@@ -477,6 +552,86 @@ def test_monitor_list_requires_authentication() -> None:
     assert response.status_code == 401
 
 
+def test_monitor_summary_requires_authentication() -> None:
+    _, _ = asyncio.run(reset_users_and_create_two())
+    app.dependency_overrides[get_database_session] = override_database_session
+    try:
+        with TestClient(app) as client:
+            response = client.get("/monitors/summary")
+    finally:
+        app.dependency_overrides.pop(get_database_session, None)
+
+    assert response.status_code == 401
+
+
+def test_monitor_summary_is_owned_complete_and_tracks_state_changes_and_deletion() -> None:
+    owner, other = asyncio.run(reset_users_and_create_two())
+    owner_ids = asyncio.run(
+        add_monitors(
+            owner.id,
+            ["Unknown", "Up", "Down", "Paused"],
+            statuses=["unknown", "up", "down", "paused"],
+        )
+    )
+    asyncio.run(
+        add_monitors(
+            other.id,
+            ["Foreign up", "Foreign down"],
+            statuses=["up", "down"],
+        )
+    )
+    app.dependency_overrides[get_database_session] = override_database_session
+    app.dependency_overrides[require_authenticated_session] = authenticated_as(owner)
+    try:
+        with TestClient(app) as client:
+            initial = client.get("/monitors/summary")
+            paused = client.post(f"/monitors/{owner_ids[1]}/pause")
+            after_pause = client.get("/monitors/summary")
+            resumed = client.post(f"/monitors/{owner_ids[3]}/resume")
+            after_resume = client.get("/monitors/summary")
+            deleted = client.delete(f"/monitors/{owner_ids[2]}")
+            after_delete = client.get("/monitors/summary")
+    finally:
+        app.dependency_overrides.pop(get_database_session, None)
+        app.dependency_overrides.pop(require_authenticated_session, None)
+
+    assert initial.status_code == paused.status_code == resumed.status_code == 200
+    assert deleted.status_code == 204
+    assert initial.json() == {
+        "total": 4,
+        "up": 1,
+        "down": 1,
+        "paused": 1,
+        "unknown": 1,
+    }
+    assert after_pause.json() == {
+        "total": 4,
+        "up": 0,
+        "down": 1,
+        "paused": 2,
+        "unknown": 1,
+    }
+    assert after_resume.json() == {
+        "total": 4,
+        "up": 0,
+        "down": 1,
+        "paused": 1,
+        "unknown": 2,
+    }
+    assert after_delete.json() == {
+        "total": 3,
+        "up": 0,
+        "down": 0,
+        "paused": 1,
+        "unknown": 2,
+    }
+    for response in (initial, after_pause, after_resume, after_delete):
+        body = response.json()
+        assert body["total"] == sum(
+            body[state] for state in ("up", "down", "paused", "unknown")
+        )
+
+
 def test_monitor_list_returns_only_owner_configuration_and_latest_fields() -> None:
     owner, other = asyncio.run(reset_users_and_create_two())
     asyncio.run(
@@ -511,9 +666,124 @@ def test_monitor_list_returns_only_owner_configuration_and_latest_fields() -> No
     assert paused["http_method"] == "HEAD"
     assert paused["latest_response_time_ms"] == 125
     assert paused["latest_status_code"] == 204
+    assert paused["latest_error_category"] is None
     assert paused["last_checked_at"] is not None
     assert all("user_id" not in item for item in body["items"])
     assert all("consecutive_failures" not in item for item in body["items"])
+
+
+def test_monitor_list_returns_every_supported_persisted_state() -> None:
+    owner, _ = asyncio.run(reset_users_and_create_two())
+    asyncio.run(
+        add_monitors(
+            owner.id,
+            ["Unknown", "Up", "Down", "Paused"],
+            statuses=["unknown", "up", "down", "paused"],
+        )
+    )
+    app.dependency_overrides[get_database_session] = override_database_session
+    app.dependency_overrides[require_authenticated_session] = authenticated_as(owner)
+    try:
+        with TestClient(app) as client:
+            response = client.get("/monitors?page=1&page_size=10")
+    finally:
+        app.dependency_overrides.pop(get_database_session, None)
+        app.dependency_overrides.pop(require_authenticated_session, None)
+
+    assert response.status_code == 200
+    assert {item["status"] for item in response.json()["items"]} == {
+        "unknown",
+        "up",
+        "down",
+        "paused",
+    }
+
+
+def test_monitor_latest_check_fields_match_persisted_results_and_keep_utc() -> None:
+    owner, _ = asyncio.run(reset_users_and_create_two())
+    monitor_ids = asyncio.run(
+        add_monitors(owner.id, ["Successful", "Network failure", "No checks"])
+    )
+    successful_completed_at = asyncio.run(add_latest_check_results(monitor_ids))
+    app.dependency_overrides[get_database_session] = override_database_session
+    app.dependency_overrides[require_authenticated_session] = authenticated_as(owner)
+    try:
+        with TestClient(app) as client:
+            listed = client.get("/monitors?page=1&page_size=10")
+            failed_details = client.get(f"/monitors/{monitor_ids[1]}")
+    finally:
+        app.dependency_overrides.pop(get_database_session, None)
+        app.dependency_overrides.pop(require_authenticated_session, None)
+
+    assert listed.status_code == failed_details.status_code == 200
+    items = {item["name"]: item for item in listed.json()["items"]}
+    assert items["Successful"]["last_checked_at"] == successful_completed_at.isoformat().replace("+00:00", "Z")
+    assert items["Successful"]["latest_response_time_ms"] == 123
+    assert items["Successful"]["latest_status_code"] == 204
+    assert items["Successful"]["latest_error_category"] is None
+    assert items["Network failure"]["latest_response_time_ms"] is None
+    assert items["Network failure"]["latest_status_code"] is None
+    assert items["Network failure"]["latest_error_category"] == "connection"
+    assert items["No checks"]["last_checked_at"] is None
+    assert items["No checks"]["latest_response_time_ms"] is None
+    assert items["No checks"]["latest_status_code"] is None
+    assert items["No checks"]["latest_error_category"] is None
+    assert failed_details.json()["latest_error_category"] == "connection"
+    assert "error_message" not in failed_details.json()
+
+
+def test_recent_checks_requires_authentication() -> None:
+    app.dependency_overrides[get_database_session] = override_database_session
+    try:
+        with TestClient(app) as client:
+            response = client.get(f"/monitors/{uuid4()}/checks")
+    finally:
+        app.dependency_overrides.pop(get_database_session, None)
+
+    assert response.status_code == 401
+
+
+def test_recent_checks_are_owned_newest_first_paginated_safe_and_nullable() -> None:
+    owner, other = asyncio.run(reset_users_and_create_two())
+    owned_id = asyncio.run(add_monitors(owner.id, ["Owned history"]))[0]
+    empty_id = asyncio.run(add_monitors(owner.id, ["Empty history"]))[0]
+    foreign_id = asyncio.run(add_monitors(other.id, ["Foreign history"]))[0]
+    check_ids = asyncio.run(add_recent_checks(owned_id))
+    asyncio.run(add_recent_checks(foreign_id))
+    app.dependency_overrides[get_database_session] = override_database_session
+    app.dependency_overrides[require_authenticated_session] = authenticated_as(owner)
+    try:
+        with TestClient(app) as client:
+            first = client.get(f"/monitors/{owned_id}/checks?page=1&page_size=2")
+            second = client.get(f"/monitors/{owned_id}/checks?page=2&page_size=2")
+            empty = client.get(f"/monitors/{empty_id}/checks")
+            foreign = client.get(f"/monitors/{foreign_id}/checks")
+    finally:
+        app.dependency_overrides.pop(get_database_session, None)
+        app.dependency_overrides.pop(require_authenticated_session, None)
+
+    assert first.status_code == second.status_code == empty.status_code == 200
+    assert foreign.status_code == 404
+    assert first.json()["total"] == 3
+    assert first.json()["pages"] == 2
+    assert [item["id"] for item in first.json()["items"]] == [
+        str(check_ids[2]),
+        str(check_ids[1]),
+    ]
+    assert [item["id"] for item in second.json()["items"]] == [str(check_ids[0])]
+    failed = first.json()["items"][1]
+    assert failed["success"] is False
+    assert failed["response_time_ms"] is None
+    assert failed["http_status_code"] is None
+    assert failed["error_category"] == "connection"
+    assert "error_message" not in failed
+    assert empty.json() == {
+        "items": [],
+        "page": 1,
+        "page_size": 10,
+        "total": 0,
+        "pages": 1,
+    }
 
 
 def test_monitor_list_pagination_is_stable_and_excludes_foreign_rows() -> None:
@@ -602,6 +872,7 @@ def test_monitor_details_returns_owned_configuration_and_latest_state() -> None:
         "last_checked_at": body["last_checked_at"],
         "latest_response_time_ms": 125,
         "latest_status_code": 204,
+        "latest_error_category": None,
         "latest_tls_expires_at": None,
     }
     assert body["next_check_at"] is not None

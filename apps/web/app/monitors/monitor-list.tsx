@@ -27,6 +27,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { cn } from "@/lib/utils"
 import { listMonitors, type MonitorDto, type MonitorListDto } from "@/lib/monitor-api"
 import { monitorDetailsHref, monitorEditHref, monitorListHref } from "@/lib/monitor-navigation"
+import { formatMonitorErrorCategory, formatMonitorResponseTime, formatMonitorStatusCode } from "@/lib/monitor-result"
 import { formatMonitorTimestamp } from "@/lib/monitor-time"
 import { MonitorDeleteButton } from "./monitor-delete-button"
 import { MonitorStateButton, type MonitorMutationAction } from "./monitor-pause-button"
@@ -56,13 +57,13 @@ function MonitorCheckTime({ value, emptyText }: { value: string | null; emptyTex
 }
 
 function responseTime(monitor: MonitorDto): string {
-  return monitor.latest_response_time_ms === null
-    ? "—"
-    : `${monitor.latest_response_time_ms.toLocaleString()} ms`
+  return formatMonitorResponseTime(monitor.latest_response_time_ms)
 }
 
 function statusCode(monitor: MonitorDto): string {
-  return monitor.latest_status_code === null ? "—" : String(monitor.latest_status_code)
+  return monitor.latest_status_code === null
+    ? formatMonitorErrorCategory(monitor.latest_error_category) ?? "—"
+    : formatMonitorStatusCode(monitor.latest_status_code)
 }
 
 function MonitorActions({
