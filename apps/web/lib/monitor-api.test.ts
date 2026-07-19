@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 
-import { createMonitor, deleteMonitor, getMonitor, getMonitorSummary, listMonitors, listRecentChecks, pauseMonitor, resumeMonitor, updateMonitor, type MonitorCreatePayload } from "@/lib/monitor-api"
+import { createMonitor, deleteMonitor, getMonitor, getMonitorResponseTimes, getMonitorSummary, listMonitors, listRecentChecks, pauseMonitor, resumeMonitor, updateMonitor, type MonitorCreatePayload } from "@/lib/monitor-api"
 
 
 const payload: MonitorCreatePayload = {
@@ -302,6 +302,37 @@ describe("listRecentChecks", () => {
   ])("maps recent-check status %s to a controlled outcome", async (status, expected) => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status })))
     await expect(listRecentChecks("monitor-1", 1, 5)).resolves.toEqual(expected)
+  })
+})
+
+describe("getMonitorResponseTimes", () => {
+  it("returns the authenticated persisted 24-hour series", async () => {
+    const series = {
+      range: "24h",
+      started_at: "2026-07-18T15:00:00Z",
+      ended_at: "2026-07-19T15:00:00Z",
+      points: [
+        { completed_at: "2026-07-19T13:00:00Z", response_time_ms: null, success: false },
+        { completed_at: "2026-07-19T14:00:00Z", response_time_ms: 125, success: true },
+      ],
+    }
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(series), { status: 200 }))
+    vi.stubGlobal("fetch", fetchMock)
+
+    await expect(getMonitorResponseTimes("monitor/one")).resolves.toEqual({ type: "success", data: series })
+    const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe("http://localhost:8000/monitors/monitor%2Fone/response-times?range=24h")
+    expect(options.credentials).toBe("include")
+    expect(options.cache).toBe("no-store")
+  })
+
+  it.each([
+    [401, { type: "unauthenticated" }],
+    [404, { type: "not_found" }],
+    [503, { type: "unavailable" }],
+  ])("maps response-time status %s to a controlled outcome", async (status, expected) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status })))
+    await expect(getMonitorResponseTimes("monitor-1")).resolves.toEqual(expected)
   })
 })
 

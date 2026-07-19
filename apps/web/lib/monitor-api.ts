@@ -65,6 +65,19 @@ export type MonitorCheckListDto = {
   pages: number
 }
 
+export type MonitorResponseTimePointDto = {
+  completed_at: string
+  response_time_ms: number | null
+  success: boolean
+}
+
+export type MonitorResponseTimeSeriesDto = {
+  range: "24h"
+  started_at: string
+  ended_at: string
+  points: MonitorResponseTimePointDto[]
+}
+
 export type MonitorField = keyof MonitorCreatePayload | "form"
 
 export type MonitorError = {
@@ -202,6 +215,25 @@ async function readMonitorCheckList(response: Response): Promise<MonitorCheckLis
       && typeof value.total === "number"
       && typeof value.pages === "number"
       ? value as MonitorCheckListDto
+      : null
+  } catch {
+    return null
+  }
+}
+
+async function readMonitorResponseTimeSeries(response: Response): Promise<MonitorResponseTimeSeriesDto | null> {
+  try {
+    const value = await response.json() as Partial<MonitorResponseTimeSeriesDto>
+    return value.range === "24h"
+      && typeof value.started_at === "string"
+      && typeof value.ended_at === "string"
+      && Array.isArray(value.points)
+      && value.points.every((point) => (
+        typeof point?.completed_at === "string"
+        && (typeof point.response_time_ms === "number" || point.response_time_ms === null)
+        && typeof point.success === "boolean"
+      ))
+      ? value as MonitorResponseTimeSeriesDto
       : null
   } catch {
     return null
@@ -384,6 +416,31 @@ export async function listRecentChecks(
         const checks = await readMonitorCheckList(response)
         return checks
           ? { type: "success", data: checks }
+          : { type: "unexpected_response" }
+      }
+      return responseFailure(response.status)
+    } catch (error) {
+      return requestFailure(error, options.signal)
+    }
+  }, options.signal)
+}
+
+export async function getMonitorResponseTimes(
+  monitorId: string,
+  options: MonitorReadOptions = {},
+): Promise<MonitorOutcome<MonitorResponseTimeSeriesDto>> {
+  return readWithOneRetry(async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/monitors/${encodeURIComponent(monitorId)}/response-times?range=24h`, {
+        method: "GET",
+        credentials: "include",
+        cache: "no-store",
+        signal: requestSignal(options.signal),
+      })
+      if (response.ok) {
+        const series = await readMonitorResponseTimeSeries(response)
+        return series
+          ? { type: "success", data: series }
           : { type: "unexpected_response" }
       }
       return responseFailure(response.status)
