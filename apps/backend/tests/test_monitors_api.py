@@ -477,6 +477,86 @@ def test_monitor_list_requires_authentication() -> None:
     assert response.status_code == 401
 
 
+def test_monitor_summary_requires_authentication() -> None:
+    _, _ = asyncio.run(reset_users_and_create_two())
+    app.dependency_overrides[get_database_session] = override_database_session
+    try:
+        with TestClient(app) as client:
+            response = client.get("/monitors/summary")
+    finally:
+        app.dependency_overrides.pop(get_database_session, None)
+
+    assert response.status_code == 401
+
+
+def test_monitor_summary_is_owned_complete_and_tracks_state_changes_and_deletion() -> None:
+    owner, other = asyncio.run(reset_users_and_create_two())
+    owner_ids = asyncio.run(
+        add_monitors(
+            owner.id,
+            ["Unknown", "Up", "Down", "Paused"],
+            statuses=["unknown", "up", "down", "paused"],
+        )
+    )
+    asyncio.run(
+        add_monitors(
+            other.id,
+            ["Foreign up", "Foreign down"],
+            statuses=["up", "down"],
+        )
+    )
+    app.dependency_overrides[get_database_session] = override_database_session
+    app.dependency_overrides[require_authenticated_session] = authenticated_as(owner)
+    try:
+        with TestClient(app) as client:
+            initial = client.get("/monitors/summary")
+            paused = client.post(f"/monitors/{owner_ids[1]}/pause")
+            after_pause = client.get("/monitors/summary")
+            resumed = client.post(f"/monitors/{owner_ids[3]}/resume")
+            after_resume = client.get("/monitors/summary")
+            deleted = client.delete(f"/monitors/{owner_ids[2]}")
+            after_delete = client.get("/monitors/summary")
+    finally:
+        app.dependency_overrides.pop(get_database_session, None)
+        app.dependency_overrides.pop(require_authenticated_session, None)
+
+    assert initial.status_code == paused.status_code == resumed.status_code == 200
+    assert deleted.status_code == 204
+    assert initial.json() == {
+        "total": 4,
+        "up": 1,
+        "down": 1,
+        "paused": 1,
+        "unknown": 1,
+    }
+    assert after_pause.json() == {
+        "total": 4,
+        "up": 0,
+        "down": 1,
+        "paused": 2,
+        "unknown": 1,
+    }
+    assert after_resume.json() == {
+        "total": 4,
+        "up": 0,
+        "down": 1,
+        "paused": 1,
+        "unknown": 2,
+    }
+    assert after_delete.json() == {
+        "total": 3,
+        "up": 0,
+        "down": 0,
+        "paused": 1,
+        "unknown": 2,
+    }
+    for response in (initial, after_pause, after_resume, after_delete):
+        body = response.json()
+        assert body["total"] == sum(
+            body[state] for state in ("up", "down", "paused", "unknown")
+        )
+
+
 def test_monitor_list_returns_only_owner_configuration_and_latest_fields() -> None:
     owner, other = asyncio.run(reset_users_and_create_two())
     asyncio.run(

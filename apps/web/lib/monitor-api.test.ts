@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 
-import { createMonitor, deleteMonitor, getMonitor, listMonitors, pauseMonitor, resumeMonitor, updateMonitor, type MonitorCreatePayload } from "@/lib/monitor-api"
+import { createMonitor, deleteMonitor, getMonitor, getMonitorSummary, listMonitors, pauseMonitor, resumeMonitor, updateMonitor, type MonitorCreatePayload } from "@/lib/monitor-api"
 
 
 const payload: MonitorCreatePayload = {
@@ -242,6 +242,28 @@ describe("getMonitor", () => {
   ])("maps detail status %s to a controlled outcome", async (status, expected) => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status })))
     await expect(getMonitor("monitor-1")).resolves.toEqual(expected)
+  })
+})
+
+describe("getMonitorSummary", () => {
+  it("returns authenticated owner summary without caching", async () => {
+    const summary = { total: 7, up: 3, down: 1, paused: 2, unknown: 1 }
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(summary), { status: 200 }))
+    vi.stubGlobal("fetch", fetchMock)
+
+    await expect(getMonitorSummary()).resolves.toEqual({ type: "success", data: summary })
+    const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe("http://localhost:8000/monitors/summary")
+    expect(options.credentials).toBe("include")
+    expect(options.cache).toBe("no-store")
+  })
+
+  it("rejects a summary whose total does not equal its state counts", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      total: 9, up: 1, down: 1, paused: 1, unknown: 1,
+    }), { status: 200 })))
+
+    await expect(getMonitorSummary()).resolves.toEqual({ type: "unexpected_response" })
   })
 })
 

@@ -86,3 +86,13 @@ class MonitorListResponse(BaseModel):
             total=total,
             pages=max(1, ceil(total / page_size)),
         )
+
+
+class MonitorSummaryResponse(BaseModel):
+    """Counts for every persisted monitor; total equals all four state counts."""
+
+    total: int = Field(ge=0)
+    up: int = Field(ge=0)
+    down: int = Field(ge=0)
+    paused: int = Field(ge=0)
+    unknown: int = Field(ge=0)

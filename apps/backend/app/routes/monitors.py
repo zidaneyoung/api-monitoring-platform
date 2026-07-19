@@ -13,6 +13,7 @@ from app.schemas.monitor import (
     MonitorCreate,
     MonitorListResponse,
     MonitorResponse,
+    MonitorSummaryResponse,
     MonitorUpdate,
 )
 from app.security.monitor_destinations import (
@@ -118,6 +119,28 @@ async def list_monitors(
         page_size=page_size,
         total=total or 0,
     )
+
+
+@router.get(
+    "/summary",
+    response_model=MonitorSummaryResponse,
+    summary="Summarize owned persisted monitors by state",
+)
+async def summarize_monitors(
+    authenticated: AuthenticatedSession = Depends(require_authenticated_session),
+    session: AsyncSession = Depends(get_database_session),
+) -> MonitorSummaryResponse:
+    """Total is the sum of unknown, up, down, and paused persisted monitors."""
+
+    result = await session.execute(
+        select(Monitor.status, func.count())
+        .where(Monitor.user_id == authenticated.user.id)
+        .group_by(Monitor.status)
+    )
+    counts = {"unknown": 0, "up": 0, "down": 0, "paused": 0}
+    for monitor_status, count in result:
+        counts[monitor_status] = count
+    return MonitorSummaryResponse(total=sum(counts.values()), **counts)
 
 
 @router.get(

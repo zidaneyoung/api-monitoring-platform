@@ -38,6 +38,14 @@ export type MonitorListDto = {
   pages: number
 }
 
+export type MonitorSummaryDto = {
+  total: number
+  up: number
+  down: number
+  paused: number
+  unknown: number
+}
+
 export type MonitorField = keyof MonitorCreatePayload | "form"
 
 export type MonitorError = {
@@ -138,6 +146,20 @@ async function readMonitorList(response: Response): Promise<MonitorListDto | nul
       && typeof value.total === "number"
       && typeof value.pages === "number"
       ? value as MonitorListDto
+      : null
+  } catch {
+    return null
+  }
+}
+
+async function readMonitorSummary(response: Response): Promise<MonitorSummaryDto | null> {
+  try {
+    const value = await response.json() as Partial<MonitorSummaryDto>
+    const counts = [value.up, value.down, value.paused, value.unknown]
+    return typeof value.total === "number"
+      && counts.every((count) => typeof count === "number" && count >= 0)
+      && value.total === counts.reduce<number>((total, count) => total + (count ?? 0), 0)
+      ? value as MonitorSummaryDto
       : null
   } catch {
     return null
@@ -264,6 +286,31 @@ export async function listMonitors(
         const monitors = await readMonitorList(response)
         return monitors
           ? { type: "success", data: monitors }
+          : { type: "unexpected_response" }
+      }
+      return responseFailure(response.status)
+    } catch (error) {
+      return requestFailure(error, options.signal)
+    }
+  }, options.signal)
+}
+
+export async function getMonitorSummary(
+  options: MonitorReadOptions = {},
+): Promise<MonitorOutcome<MonitorSummaryDto>> {
+  return readWithOneRetry(async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/monitors/summary`, {
+        method: "GET",
+        credentials: "include",
+        cache: "no-store",
+        signal: requestSignal(options.signal),
+      })
+
+      if (response.ok) {
+        const summary = await readMonitorSummary(response)
+        return summary
+          ? { type: "success", data: summary }
           : { type: "unexpected_response" }
       }
       return responseFailure(response.status)

@@ -1,40 +1,24 @@
 import Link from "next/link"
 import {
   ActivityIcon,
-  CircleCheckIcon,
-  CircleHelpIcon,
-  CirclePauseIcon,
-  CircleXIcon,
   GaugeIcon,
   PlusIcon,
 } from "lucide-react"
 
 import { mockMonitors, type Monitor } from "@/app/monitors/monitor-data"
 import { EmptyState, ErrorState, LoadingState } from "@/components/states"
-import { StatusBadge, type MonitorStatus } from "@/components/status-badge"
+import { StatusBadge } from "@/components/status-badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 
 import { ActiveIncidents } from "./active-incidents"
+import { MonitorSummary } from "./monitor-summary"
 
 type PageProps = {
   searchParams: Promise<{ state?: string | string[] }>
 }
 
 type DashboardState = "ready" | "loading" | "empty" | "error"
-
-type SummaryMetric = {
-  label: string
-  status: MonitorStatus
-  icon: typeof CircleCheckIcon
-}
-
-const summaryMetrics: SummaryMetric[] = [
-  { label: "Up", status: "up", icon: CircleCheckIcon },
-  { label: "Down", status: "down", icon: CircleXIcon },
-  { label: "Paused", status: "paused", icon: CirclePauseIcon },
-  { label: "Unknown", status: "unknown", icon: CircleHelpIcon },
-]
 
 const responseBars = [32, 42, 28, 54, 43, 62, 47, 36, 50, 41, 30, 39]
 
@@ -48,39 +32,8 @@ function normalizeState(value: string | string[] | undefined): DashboardState {
   return "ready"
 }
 
-function countByStatus(monitors: Monitor[], status: MonitorStatus) {
-  return monitors.filter((monitor) => monitor.status === status).length
-}
-
 function DashboardShell({ children }: { children: React.ReactNode }) {
   return <div className="min-h-full bg-muted/40">{children}</div>
-}
-
-function SummaryCards({ monitors }: { monitors: Monitor[] }) {
-  return (
-    <section aria-labelledby="monitor-summary" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-      <Card className="bg-primary text-primary-foreground ring-0">
-        <CardHeader>
-          <CardDescription className="text-primary-foreground/70">Monitors</CardDescription>
-          <CardTitle id="monitor-summary" className="text-3xl font-semibold">{monitors.length}</CardTitle>
-        </CardHeader>
-      </Card>
-      {summaryMetrics.map((metric) => {
-        const Icon = metric.icon
-        const total = countByStatus(monitors, metric.status)
-
-        return (
-          <Card key={metric.status} className="relative overflow-hidden">
-            <CardHeader>
-              <CardDescription>{metric.label}</CardDescription>
-              <CardTitle className="text-3xl font-semibold">{total}</CardTitle>
-            </CardHeader>
-            <Icon className="absolute right-4 top-4 size-5 text-muted-foreground" aria-hidden="true" />
-          </Card>
-        )
-      })}
-    </section>
-  )
 }
 
 function RecentMonitors({ monitors }: { monitors: Monitor[] }) {
@@ -133,7 +86,7 @@ function ResponseTimeOverview() {
 function DashboardReady() {
   return (
     <div className="grid gap-6">
-      <SummaryCards monitors={mockMonitors} />
+      <MonitorSummary />
       <div className="grid gap-6 xl:grid-cols-2">
         <RecentMonitors monitors={mockMonitors} />
         <ActiveIncidents />
