@@ -219,6 +219,34 @@ async def add_latest_check_results(monitor_ids: list[UUID]) -> datetime:
         await engine.dispose()
 
 
+async def add_recent_checks(monitor_id: UUID) -> list[UUID]:
+    engine = create_database_engine(database_url())
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    base = datetime(2026, 7, 18, 14, 0, tzinfo=timezone.utc)
+    try:
+        async with sessions() as session:
+            checks = [
+                MonitorCheck(
+                    monitor_id=monitor_id,
+                    started_at=base + timedelta(minutes=index),
+                    completed_at=base + timedelta(minutes=index, seconds=1),
+                    success=index != 1,
+                    response_time_ms=None if index == 1 else 100 + index,
+                    http_status_code=None if index == 1 else 200 + index,
+                    error_category="connection" if index == 1 else None,
+                    error_message=(
+                        "Monitor connection failed." if index == 1 else None
+                    ),
+                )
+                for index in range(3)
+            ]
+            session.add_all(checks)
+            await session.commit()
+            return [check.id for check in checks]
+    finally:
+        await engine.dispose()
+
+
 async def monitor_history_ids(monitor_id: UUID) -> tuple[list[UUID], list[UUID]]:
     engine = create_database_engine(database_url())
     sessions = async_sessionmaker(engine, expire_on_commit=False)
@@ -702,6 +730,60 @@ def test_monitor_latest_check_fields_match_persisted_results_and_keep_utc() -> N
     assert items["No checks"]["latest_error_category"] is None
     assert failed_details.json()["latest_error_category"] == "connection"
     assert "error_message" not in failed_details.json()
+
+
+def test_recent_checks_requires_authentication() -> None:
+    app.dependency_overrides[get_database_session] = override_database_session
+    try:
+        with TestClient(app) as client:
+            response = client.get(f"/monitors/{uuid4()}/checks")
+    finally:
+        app.dependency_overrides.pop(get_database_session, None)
+
+    assert response.status_code == 401
+
+
+def test_recent_checks_are_owned_newest_first_paginated_safe_and_nullable() -> None:
+    owner, other = asyncio.run(reset_users_and_create_two())
+    owned_id = asyncio.run(add_monitors(owner.id, ["Owned history"]))[0]
+    empty_id = asyncio.run(add_monitors(owner.id, ["Empty history"]))[0]
+    foreign_id = asyncio.run(add_monitors(other.id, ["Foreign history"]))[0]
+    check_ids = asyncio.run(add_recent_checks(owned_id))
+    asyncio.run(add_recent_checks(foreign_id))
+    app.dependency_overrides[get_database_session] = override_database_session
+    app.dependency_overrides[require_authenticated_session] = authenticated_as(owner)
+    try:
+        with TestClient(app) as client:
+            first = client.get(f"/monitors/{owned_id}/checks?page=1&page_size=2")
+            second = client.get(f"/monitors/{owned_id}/checks?page=2&page_size=2")
+            empty = client.get(f"/monitors/{empty_id}/checks")
+            foreign = client.get(f"/monitors/{foreign_id}/checks")
+    finally:
+        app.dependency_overrides.pop(get_database_session, None)
+        app.dependency_overrides.pop(require_authenticated_session, None)
+
+    assert first.status_code == second.status_code == empty.status_code == 200
+    assert foreign.status_code == 404
+    assert first.json()["total"] == 3
+    assert first.json()["pages"] == 2
+    assert [item["id"] for item in first.json()["items"]] == [
+        str(check_ids[2]),
+        str(check_ids[1]),
+    ]
+    assert [item["id"] for item in second.json()["items"]] == [str(check_ids[0])]
+    failed = first.json()["items"][1]
+    assert failed["success"] is False
+    assert failed["response_time_ms"] is None
+    assert failed["http_status_code"] is None
+    assert failed["error_category"] == "connection"
+    assert "error_message" not in failed
+    assert empty.json() == {
+        "items": [],
+        "page": 1,
+        "page_size": 10,
+        "total": 0,
+        "pages": 1,
+    }
 
 
 def test_monitor_list_pagination_is_stable_and_excludes_foreign_rows() -> None:

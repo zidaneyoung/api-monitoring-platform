@@ -7,10 +7,11 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_database_session
-from app.models import Monitor
+from app.models import Monitor, MonitorCheck
 from app.routes.auth import AuthenticatedSession, require_authenticated_session
 from app.schemas.monitor import (
     MonitorCreate,
+    MonitorCheckListResponse,
     MonitorListResponse,
     MonitorResponse,
     MonitorSummaryResponse,
@@ -141,6 +142,41 @@ async def summarize_monitors(
     for monitor_status, count in result:
         counts[monitor_status] = count
     return MonitorSummaryResponse(total=sum(counts.values()), **counts)
+
+
+@router.get(
+    "/{monitor_id}/checks",
+    response_model=MonitorCheckListResponse,
+    responses={
+        status.HTTP_401_UNAUTHORIZED: {"description": "Authentication required."},
+        status.HTTP_404_NOT_FOUND: {"description": "Monitor not found."},
+    },
+)
+async def list_monitor_checks(
+    monitor_id: UUID,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=10, ge=1, le=100),
+    authenticated: AuthenticatedSession = Depends(require_authenticated_session),
+    session: AsyncSession = Depends(get_database_session),
+) -> MonitorCheckListResponse:
+    await _owned_monitor(session, monitor_id, authenticated.user.id)
+    check_filter = MonitorCheck.monitor_id == monitor_id
+    total = await session.scalar(
+        select(func.count()).select_from(MonitorCheck).where(check_filter)
+    )
+    result = await session.execute(
+        select(MonitorCheck)
+        .where(check_filter)
+        .order_by(MonitorCheck.completed_at.desc(), MonitorCheck.id.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
+    return MonitorCheckListResponse.from_items(
+        items=list(result.scalars()),
+        page=page,
+        page_size=page_size,
+        total=total or 0,
+    )
 
 
 @router.get(

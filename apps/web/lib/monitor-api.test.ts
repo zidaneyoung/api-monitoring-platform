@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 
-import { createMonitor, deleteMonitor, getMonitor, getMonitorSummary, listMonitors, pauseMonitor, resumeMonitor, updateMonitor, type MonitorCreatePayload } from "@/lib/monitor-api"
+import { createMonitor, deleteMonitor, getMonitor, getMonitorSummary, listMonitors, listRecentChecks, pauseMonitor, resumeMonitor, updateMonitor, type MonitorCreatePayload } from "@/lib/monitor-api"
 
 
 const payload: MonitorCreatePayload = {
@@ -265,6 +265,43 @@ describe("getMonitorSummary", () => {
     }), { status: 200 })))
 
     await expect(getMonitorSummary()).resolves.toEqual({ type: "unexpected_response" })
+  })
+})
+
+describe("listRecentChecks", () => {
+  it("returns authenticated paginated check history without raw errors", async () => {
+    const page = {
+      items: [{
+        id: "check-1",
+        success: false,
+        completed_at: "2026-07-18T14:01:00Z",
+        response_time_ms: null,
+        http_status_code: null,
+        error_category: "connection",
+      }],
+      page: 2,
+      page_size: 5,
+      total: 6,
+      pages: 2,
+    }
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(page), { status: 200 }))
+    vi.stubGlobal("fetch", fetchMock)
+
+    await expect(listRecentChecks("monitor/one", 2, 5)).resolves.toEqual({ type: "success", data: page })
+    const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe("http://localhost:8000/monitors/monitor%2Fone/checks?page=2&page_size=5")
+    expect(options.credentials).toBe("include")
+    expect(options.cache).toBe("no-store")
+    expect(JSON.stringify(page)).not.toContain("error_message")
+  })
+
+  it.each([
+    [401, { type: "unauthenticated" }],
+    [404, { type: "not_found" }],
+    [503, { type: "unavailable" }],
+  ])("maps recent-check status %s to a controlled outcome", async (status, expected) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status })))
+    await expect(listRecentChecks("monitor-1", 1, 5)).resolves.toEqual(expected)
   })
 })
 
