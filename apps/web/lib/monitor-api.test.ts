@@ -23,6 +23,7 @@ const responseMonitor = {
   last_checked_at: null,
   latest_response_time_ms: null,
   latest_status_code: null,
+  latest_error_category: null,
 }
 
 afterEach(() => {

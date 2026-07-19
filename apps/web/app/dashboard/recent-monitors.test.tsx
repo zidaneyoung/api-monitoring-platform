@@ -23,9 +23,10 @@ const monitors: MonitorDto[] = states.map((status) => ({
   recovery_threshold: 2,
   status,
   next_check_at: null,
-  last_checked_at: null,
-  latest_response_time_ms: null,
-  latest_status_code: null,
+  last_checked_at: status === "unknown" ? null : "2026-07-18T12:30:00Z",
+  latest_response_time_ms: status === "up" ? 184 : null,
+  latest_status_code: status === "up" ? 204 : null,
+  latest_error_category: status === "down" ? "connection" : null,
 }))
 
 afterEach(() => {
@@ -48,6 +49,11 @@ describe("RecentMonitors", () => {
       expect(screen.getByRole("link", { name: `${status} API` }).getAttribute("href")).toBe(`/monitors/monitor-${status}`)
     }
     expect(container.querySelectorAll("[data-slot='badge'] svg")).toHaveLength(4)
+    expect(screen.getByText("184 ms")).toBeTruthy()
+    expect(screen.getByText("HTTP 204")).toBeTruthy()
+    expect(screen.getByText("Connection failure")).toBeTruthy()
+    expect(screen.getByText("Not checked yet")).toBeTruthy()
+    expect(screen.getAllByTitle("UTC: 2026-07-18T12:30:00Z").length).toBeGreaterThan(0)
     expect(listMonitors).toHaveBeenCalledWith(1, 5, { signal: expect.any(AbortSignal) })
   })
 })

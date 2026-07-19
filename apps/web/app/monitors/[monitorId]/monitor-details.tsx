@@ -10,6 +10,8 @@ import { Button, buttonVariants } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { getMonitor, type MonitorDto } from "@/lib/monitor-api"
 import { monitorEditHref, monitorListHref } from "@/lib/monitor-navigation"
+import { formatMonitorErrorCategory, formatMonitorResponseTime, formatMonitorStatusCode } from "@/lib/monitor-result"
+import { formatMonitorTimestamp } from "@/lib/monitor-time"
 import { MonitorDeleteButton } from "../monitor-delete-button"
 import { MonitorStateButton, type MonitorMutationAction } from "../monitor-pause-button"
 
@@ -181,6 +183,21 @@ function DetailsContent({
           <Card className="h-full">
             <CardHeader><CardTitle id="monitor-success-criteria">Success criteria</CardTitle><CardDescription>Accepted responses and consecutive-result thresholds.</CardDescription></CardHeader>
             <CardContent><ConfigurationRows rows={[["Accepted status", `${monitor.expected_status_min}–${monitor.expected_status_max}`], ["Failure threshold", String(monitor.failure_threshold)], ["Recovery threshold", String(monitor.recovery_threshold)]]} /></CardContent>
+          </Card>
+        </section>
+
+        <section aria-labelledby="monitor-latest-check">
+          <Card className="h-full">
+            <CardHeader><CardTitle id="monitor-latest-check">Latest check</CardTitle><CardDescription>Most recent completed result stored by the monitoring worker.</CardDescription></CardHeader>
+            <CardContent>
+              <ConfigurationRows rows={[
+                ["Completed", monitor.last_checked_at ? formatMonitorTimestamp(monitor.last_checked_at).display : "Not checked yet"],
+                ["Response time", formatMonitorResponseTime(monitor.latest_response_time_ms)],
+                ["HTTP status", formatMonitorStatusCode(monitor.latest_status_code)],
+                ["Error", formatMonitorErrorCategory(monitor.latest_error_category) ?? "—"],
+              ]} />
+              {monitor.last_checked_at ? <time className="sr-only" dateTime={monitor.last_checked_at}>UTC: {monitor.last_checked_at}</time> : null}
+            </CardContent>
           </Card>
         </section>
 

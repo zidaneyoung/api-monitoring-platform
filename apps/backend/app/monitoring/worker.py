@@ -464,6 +464,7 @@ async def _complete_run(
                 monitor.last_checked_at = completed_at
                 monitor.latest_response_time_ms = response_time_ms
                 monitor.latest_status_code = http_status_code
+                monitor.latest_error_category = error_category
                 monitor.latest_tls_expires_at = tls_expires_at
                 transition = apply_monitor_result(monitor, success=success)
                 if transition == "incident_opened":

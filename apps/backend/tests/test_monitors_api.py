@@ -1,7 +1,7 @@
 import asyncio
 import os
 from collections.abc import AsyncIterator
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 import pytest
@@ -134,6 +134,7 @@ async def add_monitors(
                     ),
                     latest_response_time_ms=125 if index % 2 else None,
                     latest_status_code=204 if index % 2 else None,
+                    latest_error_category=None,
                 )
                 for index, name in enumerate(names)
             ]
@@ -169,6 +170,51 @@ async def add_monitor_history(monitor_id: UUID, user_id: UUID) -> tuple[UUID, UU
             session.add_all([check, incident])
             await session.commit()
             return check.id, incident.id
+    finally:
+        await engine.dispose()
+
+
+async def add_latest_check_results(monitor_ids: list[UUID]) -> datetime:
+    engine = create_database_engine(database_url())
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    completed_at = datetime(2026, 7, 18, 12, 30, tzinfo=timezone.utc)
+    try:
+        async with sessions() as session:
+            successful = await session.get(Monitor, monitor_ids[0])
+            failed = await session.get(Monitor, monitor_ids[1])
+            assert successful is not None and failed is not None
+            successful.last_checked_at = completed_at
+            successful.latest_response_time_ms = 123
+            successful.latest_status_code = 204
+            successful.latest_error_category = None
+            failed.last_checked_at = completed_at + timedelta(minutes=1)
+            failed.latest_response_time_ms = None
+            failed.latest_status_code = None
+            failed.latest_error_category = "connection"
+            session.add_all(
+                [
+                    MonitorCheck(
+                        monitor_id=successful.id,
+                        started_at=completed_at - timedelta(milliseconds=123),
+                        completed_at=completed_at,
+                        success=True,
+                        response_time_ms=123,
+                        http_status_code=204,
+                    ),
+                    MonitorCheck(
+                        monitor_id=failed.id,
+                        started_at=completed_at,
+                        completed_at=completed_at + timedelta(minutes=1),
+                        success=False,
+                        response_time_ms=None,
+                        http_status_code=None,
+                        error_category="connection",
+                        error_message="Monitor connection failed.",
+                    ),
+                ]
+            )
+            await session.commit()
+            return completed_at
     finally:
         await engine.dispose()
 
@@ -249,6 +295,7 @@ def test_authenticated_monitor_creation_sets_owner_and_initial_state(
     assert body["last_checked_at"] is None
     assert body["latest_response_time_ms"] is None
     assert body["latest_status_code"] is None
+    assert body["latest_error_category"] is None
     assert "user_id" not in body
     assert "is_enabled" not in body
     assert "consecutive_failures" not in body
@@ -591,6 +638,7 @@ def test_monitor_list_returns_only_owner_configuration_and_latest_fields() -> No
     assert paused["http_method"] == "HEAD"
     assert paused["latest_response_time_ms"] == 125
     assert paused["latest_status_code"] == 204
+    assert paused["latest_error_category"] is None
     assert paused["last_checked_at"] is not None
     assert all("user_id" not in item for item in body["items"])
     assert all("consecutive_failures" not in item for item in body["items"])
@@ -621,6 +669,39 @@ def test_monitor_list_returns_every_supported_persisted_state() -> None:
         "down",
         "paused",
     }
+
+
+def test_monitor_latest_check_fields_match_persisted_results_and_keep_utc() -> None:
+    owner, _ = asyncio.run(reset_users_and_create_two())
+    monitor_ids = asyncio.run(
+        add_monitors(owner.id, ["Successful", "Network failure", "No checks"])
+    )
+    successful_completed_at = asyncio.run(add_latest_check_results(monitor_ids))
+    app.dependency_overrides[get_database_session] = override_database_session
+    app.dependency_overrides[require_authenticated_session] = authenticated_as(owner)
+    try:
+        with TestClient(app) as client:
+            listed = client.get("/monitors?page=1&page_size=10")
+            failed_details = client.get(f"/monitors/{monitor_ids[1]}")
+    finally:
+        app.dependency_overrides.pop(get_database_session, None)
+        app.dependency_overrides.pop(require_authenticated_session, None)
+
+    assert listed.status_code == failed_details.status_code == 200
+    items = {item["name"]: item for item in listed.json()["items"]}
+    assert items["Successful"]["last_checked_at"] == successful_completed_at.isoformat().replace("+00:00", "Z")
+    assert items["Successful"]["latest_response_time_ms"] == 123
+    assert items["Successful"]["latest_status_code"] == 204
+    assert items["Successful"]["latest_error_category"] is None
+    assert items["Network failure"]["latest_response_time_ms"] is None
+    assert items["Network failure"]["latest_status_code"] is None
+    assert items["Network failure"]["latest_error_category"] == "connection"
+    assert items["No checks"]["last_checked_at"] is None
+    assert items["No checks"]["latest_response_time_ms"] is None
+    assert items["No checks"]["latest_status_code"] is None
+    assert items["No checks"]["latest_error_category"] is None
+    assert failed_details.json()["latest_error_category"] == "connection"
+    assert "error_message" not in failed_details.json()
 
 
 def test_monitor_list_pagination_is_stable_and_excludes_foreign_rows() -> None:
@@ -709,6 +790,7 @@ def test_monitor_details_returns_owned_configuration_and_latest_state() -> None:
         "last_checked_at": body["last_checked_at"],
         "latest_response_time_ms": 125,
         "latest_status_code": 204,
+        "latest_error_category": None,
         "latest_tls_expires_at": None,
     }
     assert body["next_check_at"] is not None

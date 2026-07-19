@@ -17,6 +17,7 @@ export type MonitorDto = {
   last_checked_at: string | null
   latest_response_time_ms: number | null
   latest_status_code: number | null
+  latest_error_category: string | null
 }
 
 export type MonitorCreatePayload = Omit<
@@ -27,6 +28,7 @@ export type MonitorCreatePayload = Omit<
   | "last_checked_at"
   | "latest_response_time_ms"
   | "latest_status_code"
+  | "latest_error_category"
 >
 export type MonitorUpdatePayload = MonitorCreatePayload
 

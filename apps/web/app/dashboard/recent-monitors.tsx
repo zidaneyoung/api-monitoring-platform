@@ -8,6 +8,8 @@ import { StatusBadge } from "@/components/status-badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { listMonitors, type MonitorDto } from "@/lib/monitor-api"
+import { formatMonitorErrorCategory, formatMonitorResponseTime, formatMonitorStatusCode } from "@/lib/monitor-result"
+import { formatMonitorTimestamp } from "@/lib/monitor-time"
 
 type RecentMonitorState =
   | { type: "loading" }
@@ -56,7 +58,19 @@ export function RecentMonitors() {
               <Link href={`/monitors/${monitor.id}`} className="font-medium hover:underline">{monitor.name}</Link>
               <p className="mt-0.5 truncate text-sm text-muted-foreground">{monitor.url}</p>
             </div>
-            <StatusBadge status={monitor.status} />
+            <div className="flex items-center gap-4 sm:justify-end">
+              <div className="text-right text-sm">
+                <div className="font-medium">{formatMonitorResponseTime(monitor.latest_response_time_ms)}</div>
+                <div className="text-muted-foreground">
+                  {monitor.last_checked_at
+                    ? <time dateTime={monitor.last_checked_at} title={`UTC: ${monitor.last_checked_at}`}>{formatMonitorTimestamp(monitor.last_checked_at).display}</time>
+                    : "Not checked yet"}
+                </div>
+                {monitor.latest_status_code !== null ? <div className="text-muted-foreground">HTTP {formatMonitorStatusCode(monitor.latest_status_code)}</div> : null}
+                {formatMonitorErrorCategory(monitor.latest_error_category) ? <div className="text-destructive">{formatMonitorErrorCategory(monitor.latest_error_category)}</div> : null}
+              </div>
+              <StatusBadge status={monitor.status} />
+            </div>
           </div>
         ))}
       </CardContent>
