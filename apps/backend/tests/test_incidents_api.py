@@ -157,6 +157,62 @@ async def seed_incidents() -> tuple[User, User, dict[str, UUID]]:
         await engine.dispose()
 
 
+async def seed_resolved_incident_page() -> tuple[User, list[UUID]]:
+    engine = create_database_engine(database_url())
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        async with sessions() as session:
+            await session.execute(text("DELETE FROM users"))
+            owner = User(email=f"owner-{uuid4()}@example.com", password_hash="hash")
+            other = User(email=f"other-{uuid4()}@example.com", password_hash="hash")
+            owner_monitors = [
+                make_monitor(owner, f"Resolved {index}") for index in range(3)
+            ]
+            active_monitor = make_monitor(owner, "Still active")
+            foreign_monitor = make_monitor(other, "Foreign resolved")
+            session.add_all(
+                [owner, other, *owner_monitors, active_monitor, foreign_monitor]
+            )
+            await session.flush()
+
+            base = datetime(2026, 7, 10, 12, 0, tzinfo=UTC)
+            resolved = [
+                Incident(
+                    monitor=monitor,
+                    user=owner,
+                    status="resolved",
+                    opened_at=base + timedelta(hours=index),
+                    detected_at=base + timedelta(hours=index),
+                    resolved_at=base + timedelta(hours=index, minutes=index + 1),
+                )
+                for index, monitor in enumerate(owner_monitors)
+            ]
+            session.add_all(
+                [
+                    *resolved,
+                    Incident(
+                        monitor=active_monitor,
+                        user=owner,
+                        status="open",
+                        opened_at=base + timedelta(hours=4),
+                        detected_at=base + timedelta(hours=4),
+                    ),
+                    Incident(
+                        monitor=foreign_monitor,
+                        user=other,
+                        status="resolved",
+                        opened_at=base + timedelta(hours=5),
+                        detected_at=base + timedelta(hours=5),
+                        resolved_at=base + timedelta(hours=5, minutes=1),
+                    ),
+                ]
+            )
+            await session.commit()
+            return owner, [incident.id for incident in reversed(resolved)]
+    finally:
+        await engine.dispose()
+
+
 @pytest.mark.parametrize(
     ("opened_at", "resolved_at", "expected"),
     [
@@ -230,6 +286,35 @@ def test_incident_list_is_owned_ordered_and_paginated() -> None:
     assert active_item["duration_seconds"] >= 0
     assert resolved_page.json()["total"] == 1
     assert resolved_page.json()["items"][0]["id"] == str(incident_ids["resolved"])
+
+
+def test_resolved_incidents_are_owned_ordered_paginated_and_keep_final_times() -> None:
+    owner, expected_ids = asyncio.run(seed_resolved_incident_page())
+    app.dependency_overrides[get_database_session] = override_database_session
+    app.dependency_overrides[require_authenticated_session] = authenticated_as(owner)
+    try:
+        with TestClient(app) as client:
+            first = client.get("/incidents?status=resolved&page=1&page_size=2")
+            second = client.get("/incidents?status=resolved&page=2&page_size=2")
+    finally:
+        app.dependency_overrides.pop(get_database_session, None)
+        app.dependency_overrides.pop(require_authenticated_session, None)
+
+    assert first.status_code == second.status_code == 200
+    assert first.json()["total"] == 3
+    assert first.json()["pages"] == 2
+    assert [item["id"] for item in first.json()["items"]] == [
+        str(expected_ids[0]),
+        str(expected_ids[1]),
+    ]
+    assert [item["id"] for item in second.json()["items"]] == [str(expected_ids[2])]
+    items = first.json()["items"] + second.json()["items"]
+    assert all(item["status"] == "resolved" for item in items)
+    assert all(item["resolved_at"] is not None for item in items)
+    assert [item["duration_seconds"] for item in items] == [180, 120, 60]
+    assert [item["opened_at"] for item in items] == sorted(
+        [item["opened_at"] for item in items], reverse=True
+    )
 
 
 def test_incident_details_returns_owned_safe_timeline_and_checks() -> None:

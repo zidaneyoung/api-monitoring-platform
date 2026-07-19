@@ -109,7 +109,7 @@ function IncidentCard({ incident }: { incident: IncidentListItemDto }) {
         <dl className="grid sm:grid-cols-3">
           <IncidentMeta label="Opened" value={formatTime(incident.opened_at)} icon={<CalendarDaysIcon className="size-3.5" strokeWidth={1.8} aria-hidden="true" />} />
           <IncidentMeta label={incident.resolved_at ? "Resolved" : "Resolution"} value={incident.resolved_at ? formatTime(incident.resolved_at) : "Still open"} icon={<CalendarDaysIcon className="size-3.5" strokeWidth={1.8} aria-hidden="true" />} divided />
-          <IncidentMeta label="Duration" value={formatIncidentDuration(incident.duration_seconds)} icon={<Clock3Icon className="size-3.5" strokeWidth={1.8} aria-hidden="true" />} divided />
+          <IncidentMeta label={section === "resolved" ? "Final duration" : "Current duration"} value={formatIncidentDuration(incident.duration_seconds)} icon={<Clock3Icon className="size-3.5" strokeWidth={1.8} aria-hidden="true" />} divided />
         </dl>
         <p className="mt-3 text-xs leading-relaxed text-muted-foreground">{incident.cause_message ?? "Monitor state changed after consecutive checks."}</p>
       </CardContent>
