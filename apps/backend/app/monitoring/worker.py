@@ -1,6 +1,7 @@
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import hashlib
 import logging
 import socket
 import ssl
@@ -25,6 +26,7 @@ from app.models import (
     User,
 )
 from app.monitoring.state import apply_monitor_result, monitor_can_execute_request
+from app.notifications.dispatcher import enqueue_notification_delivery
 from app.security.monitor_destinations import (
     DestinationResolver,
     DestinationSecurityError,
@@ -38,6 +40,7 @@ logger = logging.getLogger(__name__)
 
 ClientFactory = Callable[[float], httpx.AsyncClient]
 Clock = Callable[[], float]
+NotificationEnqueuer = Callable[[UUID], Awaitable[None]]
 MAX_REDIRECTS = 5
 
 
@@ -86,6 +89,18 @@ def _safe_incident_cause(check: MonitorCheck) -> tuple[str, str]:
     )
 
 
+def _notification_deduplication_key(
+    *,
+    incident_id: UUID,
+    event_type: str,
+    destination: str,
+) -> str:
+    destination_digest = hashlib.sha256(
+        destination.strip().casefold().encode("utf-8")
+    ).hexdigest()
+    return f"email:{event_type}:{incident_id}:{destination_digest}"
+
+
 async def _add_incident_opening(
     session: AsyncSession,
     *,
@@ -93,7 +108,7 @@ async def _add_incident_opening(
     check: MonitorCheck,
     owner_email: str,
     occurred_at: datetime,
-) -> None:
+) -> UUID | None:
     active_incident_id = await session.scalar(
         select(Incident.id).where(
             Incident.monitor_id == monitor.id,
@@ -102,10 +117,11 @@ async def _add_incident_opening(
     )
     if active_incident_id is not None:
         monitor.status = "down"
-        return
+        return None
 
     cause_category, cause_message = _safe_incident_cause(check)
     incident_id = uuid4()
+    delivery_id = uuid4()
     incident = Incident(
         id=incident_id,
         monitor_id=monitor.id,
@@ -128,16 +144,22 @@ async def _add_incident_opening(
                 message=cause_message,
             ),
             NotificationDelivery(
+                id=delivery_id,
                 user_id=monitor.user_id,
                 incident=incident,
                 event_type="incident_opened",
                 channel="email",
                 destination=owner_email,
                 status="pending",
-                deduplication_key=f"incident:{incident_id}:opened",
+                deduplication_key=_notification_deduplication_key(
+                    incident_id=incident_id,
+                    event_type="incident_opened",
+                    destination=owner_email,
+                ),
             ),
         ]
     )
+    return delivery_id
 
 
 async def _add_incident_resolution(
@@ -147,7 +169,7 @@ async def _add_incident_resolution(
     check: MonitorCheck,
     owner_email: str,
     occurred_at: datetime,
-) -> None:
+) -> UUID | None:
     incident = await session.scalar(
         select(Incident)
         .where(
@@ -157,7 +179,7 @@ async def _add_incident_resolution(
         .with_for_update()
     )
     if incident is None:
-        return
+        return None
 
     next_sequence = (
         await session.scalar(
@@ -172,6 +194,7 @@ async def _add_incident_resolution(
     monitor.status = "up"
     monitor.consecutive_failures = 0
     monitor.consecutive_successes = 0
+    delivery_id = uuid4()
     session.add_all(
         [
             IncidentEvent(
@@ -182,16 +205,22 @@ async def _add_incident_resolution(
                 message="Monitor recovered after consecutive successful checks.",
             ),
             NotificationDelivery(
+                id=delivery_id,
                 user_id=monitor.user_id,
                 incident=incident,
                 event_type="incident_recovered",
                 channel="email",
                 destination=owner_email,
                 status="pending",
-                deduplication_key=f"incident:{incident.id}:recovered",
+                deduplication_key=_notification_deduplication_key(
+                    incident_id=incident.id,
+                    event_type="incident_recovered",
+                    destination=owner_email,
+                ),
             ),
         ]
     )
+    return delivery_id
 
 
 def create_http_client(timeout_seconds: float) -> httpx.AsyncClient:
@@ -421,8 +450,10 @@ async def _complete_run(
     error_category: str | None,
     error_message: str | None,
     session_factory: async_sessionmaker[AsyncSession],
+    notification_enqueuer: NotificationEnqueuer,
 ) -> MonitorExecutionResult:
     completed_at = datetime.now(timezone.utc)
+    delivery_id: UUID | None = None
     try:
         async with session_factory() as session:
             async with session.begin():
@@ -473,7 +504,7 @@ async def _complete_run(
                     )
                     if owner_email is None:
                         raise SQLAlchemyError("monitor owner is missing")
-                    await _add_incident_opening(
+                    delivery_id = await _add_incident_opening(
                         session,
                         monitor=monitor,
                         check=check,
@@ -486,7 +517,7 @@ async def _complete_run(
                     )
                     if owner_email is None:
                         raise SQLAlchemyError("monitor owner is missing")
-                    await _add_incident_resolution(
+                    delivery_id = await _add_incident_resolution(
                         session,
                         monitor=monitor,
                         check=check,
@@ -495,10 +526,17 @@ async def _complete_run(
                     )
                 run.status = "completed"
                 run.completed_at = completed_at
-                return MonitorExecutionResult("completed", True)
+                result = MonitorExecutionResult("completed", True)
     except SQLAlchemyError:
         logger.warning("monitor_worker_database_failure")
         return MonitorExecutionResult("failed", False)
+
+    if delivery_id is not None:
+        try:
+            await notification_enqueuer(delivery_id)
+        except Exception:
+            logger.warning("notification_delivery_enqueue_failed")
+    return result
 
 
 async def execute_monitor_run(
@@ -509,6 +547,7 @@ async def execute_monitor_run(
     client_factory: ClientFactory = create_http_client,
     max_response_bytes: int | None = None,
     clock: Clock = time.perf_counter,
+    notification_enqueuer: NotificationEnqueuer | None = None,
 ) -> MonitorExecutionResult:
     """Execute one queued monitor run and persist a safe, bounded check record."""
 
@@ -582,4 +621,7 @@ async def execute_monitor_run(
         error_category=error_category,
         error_message=error_message,
         session_factory=session_factory,
+        notification_enqueuer=(
+            notification_enqueuer or enqueue_notification_delivery
+        ),
     )

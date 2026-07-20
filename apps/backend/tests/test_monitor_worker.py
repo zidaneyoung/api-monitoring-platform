@@ -734,6 +734,7 @@ def test_failed_counter_update_rolls_back_check_and_monitor_changes(
 @pytest.mark.parametrize("failure_threshold", [1, 3])
 def test_failure_threshold_opens_incident_with_safe_related_events(
     failure_threshold: int,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def scenario() -> None:
         engine, sessions = await create_session_factory()
@@ -744,6 +745,16 @@ def test_failure_threshold_opens_incident_with_safe_related_events(
                 email=f"threshold-{failure_threshold}@example.com",
                 failure_threshold=failure_threshold,
             )
+            provider_calls: list[str] = []
+
+            def slow_provider(*_args: object) -> str:
+                provider_calls.append("called")
+                return "unexpected"
+
+            monkeypatch.setattr(
+                "app.notifications.email.send_smtp_message",
+                slow_provider,
+            )
 
             async def handler(_request: httpx.Request) -> httpx.Response:
                 return httpx.Response(500, content=b"unsafe body must not persist")
@@ -752,12 +763,23 @@ def test_failure_threshold_opens_incident_with_safe_related_events(
             for _ in range(1, failure_threshold):
                 runs.append(await create_additional_run(sessions, monitor.id))
 
+            enqueued_delivery_ids: list[UUID] = []
+
+            async def record_enqueue(delivery_id: UUID) -> None:
+                async with sessions() as committed_session:
+                    assert (
+                        await committed_session.get(NotificationDelivery, delivery_id)
+                        is not None
+                    )
+                enqueued_delivery_ids.append(delivery_id)
+
             for index, run in enumerate(runs, start=1):
                 result = await execute_monitor_run(
                     run.id,
                     session_factory=sessions,
                     destination_resolver=public_resolver,
                     client_factory=client_factory(httpx.MockTransport(handler), []),
+                    notification_enqueuer=record_enqueue,
                 )
                 assert result.status == "completed"
                 if index < failure_threshold:
@@ -805,6 +827,14 @@ def test_failure_threshold_opens_incident_with_safe_related_events(
             assert deliveries[0].channel == "email"
             assert deliveries[0].status == "pending"
             assert deliveries[0].attempt_count == 0
+            assert deliveries[0].destination == f"threshold-{failure_threshold}@example.com"
+            assert deliveries[0].deduplication_key == worker._notification_deduplication_key(
+                incident_id=incident.id,
+                event_type="incident_opened",
+                destination=deliveries[0].destination,
+            )
+            assert enqueued_delivery_ids == [deliveries[0].id]
+            assert provider_calls == []
         finally:
             await engine.dispose()
 
@@ -834,11 +864,17 @@ def test_incident_opening_write_failure_rolls_back_complete_operation(
             async def handler(_request: httpx.Request) -> httpx.Response:
                 return httpx.Response(500, content=b"failed")
 
+            enqueued_delivery_ids: list[UUID] = []
+
+            async def record_enqueue(delivery_id: UUID) -> None:
+                enqueued_delivery_ids.append(delivery_id)
+
             result = await execute_monitor_run(
                 run.id,
                 session_factory=sessions,
                 destination_resolver=public_resolver,
                 client_factory=client_factory(httpx.MockTransport(handler), []),
+                notification_enqueuer=record_enqueue,
             )
 
             assert result.status == "failed"
@@ -851,6 +887,46 @@ def test_incident_opening_write_failure_rolls_back_complete_operation(
             assert refreshed_monitor is not None
             assert refreshed_monitor.status == "unknown"
             assert refreshed_monitor.consecutive_failures == 0
+            assert enqueued_delivery_ids == []
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_notification_enqueue_failure_does_not_roll_back_incident() -> None:
+    async def scenario() -> None:
+        engine, sessions = await create_session_factory()
+        try:
+            await reset_database(sessions)
+            monitor, run = await create_monitor_run(
+                sessions,
+                email="enqueue-failure@example.com",
+                failure_threshold=1,
+            )
+
+            async def handler(_request: httpx.Request) -> httpx.Response:
+                return httpx.Response(500, content=b"failed")
+
+            async def unavailable_queue(_delivery_id: UUID) -> None:
+                raise ConnectionError("broker unavailable")
+
+            result = await execute_monitor_run(
+                run.id,
+                session_factory=sessions,
+                destination_resolver=public_resolver,
+                client_factory=client_factory(httpx.MockTransport(handler), []),
+                notification_enqueuer=unavailable_queue,
+            )
+
+            async with sessions() as session:
+                incident = await session.scalar(select(Incident))
+                delivery = await session.scalar(select(NotificationDelivery))
+                refreshed_monitor = await session.get(Monitor, monitor.id)
+            assert result.status == "completed"
+            assert incident is not None and incident.status == "open"
+            assert delivery is not None and delivery.status == "pending"
+            assert refreshed_monitor is not None and refreshed_monitor.status == "down"
         finally:
             await engine.dispose()
 
@@ -1173,11 +1249,22 @@ def test_recovery_threshold_resolves_once_and_allows_later_incident(
             async def success_handler(_request: httpx.Request) -> httpx.Response:
                 return httpx.Response(200, content=b"ok")
 
+            enqueued_delivery_ids: list[UUID] = []
+
+            async def record_enqueue(delivery_id: UUID) -> None:
+                async with sessions() as committed_session:
+                    assert (
+                        await committed_session.get(NotificationDelivery, delivery_id)
+                        is not None
+                    )
+                enqueued_delivery_ids.append(delivery_id)
+
             await execute_monitor_run(
                 opening_run.id,
                 session_factory=sessions,
                 destination_resolver=public_resolver,
                 client_factory=client_factory(httpx.MockTransport(failed_handler), []),
+                notification_enqueuer=record_enqueue,
             )
             async with sessions() as session:
                 opened_incident = await session.scalar(select(Incident))
@@ -1195,6 +1282,7 @@ def test_recovery_threshold_resolves_once_and_allows_later_incident(
                     client_factory=client_factory(
                         httpx.MockTransport(success_handler), []
                     ),
+                    notification_enqueuer=record_enqueue,
                 )
                 if index < recovery_threshold:
                     async with sessions() as session:
@@ -1250,6 +1338,16 @@ def test_recovery_threshold_resolves_once_and_allows_later_incident(
                 "incident_recovered",
             ]
             assert all(delivery.status == "pending" for delivery in deliveries)
+            assert [delivery.user_id for delivery in deliveries] == [
+                monitor.user_id,
+                monitor.user_id,
+            ]
+            assert [delivery.incident_id for delivery in deliveries] == [
+                resolved_incident.id,
+                resolved_incident.id,
+            ]
+            assert len({delivery.deduplication_key for delivery in deliveries}) == 2
+            assert enqueued_delivery_ids == [delivery.id for delivery in deliveries]
 
             fixed_resolved_at = resolved_incident.resolved_at
             additional_success = await create_additional_run(sessions, monitor.id)
@@ -1258,6 +1356,7 @@ def test_recovery_threshold_resolves_once_and_allows_later_incident(
                 session_factory=sessions,
                 destination_resolver=public_resolver,
                 client_factory=client_factory(httpx.MockTransport(success_handler), []),
+                notification_enqueuer=record_enqueue,
             )
             async with sessions() as session:
                 unchanged = await session.get(Incident, resolved_incident.id)

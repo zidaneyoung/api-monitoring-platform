@@ -33,6 +33,13 @@ class Settings:
     redis_url: str
     scheduler_dispatch_interval_seconds: int
     monitor_max_response_bytes: int
+    email_host: str
+    email_port: int
+    email_username: str | None
+    email_password: str | None
+    email_from: str
+    email_use_tls: bool
+    email_timeout_seconds: int
 
 
 def _positive_int(name: str, default: str) -> int:
@@ -49,6 +56,18 @@ def _boolean(name: str, default: bool) -> bool:
     if value.lower() not in {"true", "false"}:
         raise ValueError(f"{name} must be true or false")
     return value.lower() == "true"
+
+
+def _optional_string(name: str) -> str | None:
+    value = os.getenv(name, "").strip()
+    return value or None
+
+
+def _required_single_line(name: str, default: str) -> str:
+    value = os.getenv(name, default).strip()
+    if not value or "\r" in value or "\n" in value:
+        raise ValueError(f"{name} must be a non-empty single-line value")
+    return value
 
 
 def _trusted_proxy_networks() -> tuple[str, ...]:
@@ -92,6 +111,17 @@ def load_settings() -> Settings:
         "MONITOR_MAX_RESPONSE_BYTES",
         "1048576",
     )
+    email_host = _required_single_line("EMAIL_HOST", "smtp")
+    email_port = _positive_int("EMAIL_PORT", "1025")
+    email_username = _optional_string("EMAIL_USERNAME")
+    email_password = _optional_string("EMAIL_PASSWORD")
+    if (email_username is None) != (email_password is None):
+        raise ValueError("EMAIL_USERNAME and EMAIL_PASSWORD must be set together")
+    email_from = _required_single_line(
+        "EMAIL_FROM",
+        "no-reply@api-monitoring.local",
+    )
+    email_timeout_seconds = _positive_int("EMAIL_TIMEOUT_SECONDS", "10")
 
     session_cookie_secure = environment.lower() == "production" or _boolean(
         "SESSION_COOKIE_SECURE",
@@ -163,4 +193,11 @@ def load_settings() -> Settings:
         redis_url=redis_url,
         scheduler_dispatch_interval_seconds=scheduler_dispatch_interval_seconds,
         monitor_max_response_bytes=monitor_max_response_bytes,
+        email_host=email_host,
+        email_port=email_port,
+        email_username=email_username,
+        email_password=email_password,
+        email_from=email_from,
+        email_use_tls=_boolean("EMAIL_USE_TLS", False),
+        email_timeout_seconds=email_timeout_seconds,
     )
