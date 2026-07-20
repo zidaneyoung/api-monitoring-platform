@@ -734,6 +734,7 @@ def test_failed_counter_update_rolls_back_check_and_monitor_changes(
 @pytest.mark.parametrize("failure_threshold", [1, 3])
 def test_failure_threshold_opens_incident_with_safe_related_events(
     failure_threshold: int,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def scenario() -> None:
         engine, sessions = await create_session_factory()
@@ -743,6 +744,16 @@ def test_failure_threshold_opens_incident_with_safe_related_events(
                 sessions,
                 email=f"threshold-{failure_threshold}@example.com",
                 failure_threshold=failure_threshold,
+            )
+            provider_calls: list[str] = []
+
+            def slow_provider(*_args: object) -> str:
+                provider_calls.append("called")
+                return "unexpected"
+
+            monkeypatch.setattr(
+                "app.notifications.email.send_smtp_message",
+                slow_provider,
             )
 
             async def handler(_request: httpx.Request) -> httpx.Response:
@@ -823,6 +834,7 @@ def test_failure_threshold_opens_incident_with_safe_related_events(
                 destination=deliveries[0].destination,
             )
             assert enqueued_delivery_ids == [deliveries[0].id]
+            assert provider_calls == []
         finally:
             await engine.dispose()
 

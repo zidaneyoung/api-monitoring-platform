@@ -4,6 +4,7 @@ import asyncio
 from celery import Celery
 
 from app.config import load_settings
+from app.notifications.constants import EMAIL_DELIVERY_TASK
 
 
 def _redis_url() -> str:
@@ -28,6 +29,7 @@ celery_app.conf.update(
         },
     },
     timezone="UTC",
+    task_routes={EMAIL_DELIVERY_TASK: {"queue": "email"}},
 )
 
 
@@ -64,6 +66,22 @@ def execute_monitor_run_task(run_id: str) -> dict[str, str | bool]:
         try:
             result = await execute_monitor_run(run_id)
             return {"status": result.status, "check_created": result.check_created}
+        finally:
+            await dispose_database_engine()
+
+    return asyncio.run(run_task())
+
+
+@celery_app.task(name=EMAIL_DELIVERY_TASK)
+def deliver_notification_task(delivery_id: str) -> str:
+    """Deliver one durable email record on the dedicated email queue."""
+
+    from app.database import dispose_database_engine
+    from app.notifications.email import deliver_notification
+
+    async def run_task() -> str:
+        try:
+            return await deliver_notification(delivery_id)
         finally:
             await dispose_database_engine()
 

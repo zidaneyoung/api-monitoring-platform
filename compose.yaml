@@ -30,6 +30,12 @@ services:
       retries: 12
       start_period: 3s
 
+  mailpit:
+    image: axllent/mailpit:v1.27
+    restart: unless-stopped
+    ports:
+      - ${MAILPIT_UI_PORT:-8025}:8025
+
   backend:
     build:
       context: ./apps/backend
@@ -113,6 +119,38 @@ services:
       - app.celery_app:celery_app
       - worker
       - --loglevel=info
+
+  email-worker:
+    build:
+      context: ./apps/backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+    env_file:
+      - ./apps/backend/.env
+    environment:
+      EMAIL_HOST: ${EMAIL_HOST:-mailpit}
+      EMAIL_PORT: ${EMAIL_PORT:-1025}
+      EMAIL_USERNAME: ${EMAIL_USERNAME:-}
+      EMAIL_PASSWORD: ${EMAIL_PASSWORD:-}
+      EMAIL_FROM: ${EMAIL_FROM:-no-reply@api-monitoring.local}
+      EMAIL_USE_TLS: ${EMAIL_USE_TLS:-false}
+      EMAIL_TIMEOUT_SECONDS: ${EMAIL_TIMEOUT_SECONDS:-10}
+    volumes:
+      - ./apps/backend:/app
+    command:
+      - celery
+      - -A
+      - app.celery_app:celery_app
+      - worker
+      - --loglevel=info
+      - --queues=email
 
   scheduler:
     build:

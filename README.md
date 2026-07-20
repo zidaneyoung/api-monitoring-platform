@@ -94,6 +94,14 @@ What comes up:
 - `redis` on the internal Compose network at `redis:6379`
 - `backend` on `http://localhost:8000`
 - `frontend` on `http://localhost:3000`
+- `mailpit` SMTP capture on the internal network at `mailpit:1025`
+- `email-worker` consuming only the `email` Celery queue
+
+Captured development email is available in the Mailpit UI at
+`http://localhost:8025` by default. Override the host UI port with
+`MAILPIT_UI_PORT`; keep SMTP credentials empty and TLS disabled for this local-only
+service. Production SMTP values remain environment-driven through
+`apps/backend/.env`.
 
 Health URLs:
 

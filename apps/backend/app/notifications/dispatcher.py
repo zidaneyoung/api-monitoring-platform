@@ -1,9 +1,7 @@
 from uuid import UUID
 
 from app.celery_app import celery_app
-
-
-EMAIL_DELIVERY_TASK = "app.notifications.email.deliver_notification"
+from app.notifications.constants import EMAIL_DELIVERY_TASK
 
 
 async def enqueue_notification_delivery(delivery_id: UUID) -> None:

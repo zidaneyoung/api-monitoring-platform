@@ -6,6 +6,7 @@ from app.notifications.dispatcher import (
     EMAIL_DELIVERY_TASK,
     enqueue_notification_delivery,
 )
+from app.celery_app import celery_app
 
 
 def test_email_delivery_is_routed_to_the_dedicated_queue(monkeypatch) -> None:
@@ -20,3 +21,8 @@ def test_email_delivery_is_routed_to_the_dedicated_queue(monkeypatch) -> None:
         args=[str(delivery_id)],
         queue="email",
     )
+
+
+def test_email_delivery_task_is_registered_on_dedicated_queue() -> None:
+    assert EMAIL_DELIVERY_TASK in celery_app.tasks
+    assert celery_app.conf.task_routes[EMAIL_DELIVERY_TASK] == {"queue": "email"}
