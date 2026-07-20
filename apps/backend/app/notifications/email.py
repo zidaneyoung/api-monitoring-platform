@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.config import Settings, load_settings
 from app.database import SessionFactory
 from app.models import Incident, Monitor, NotificationDelivery
+from app.notifications.delivery_state import transition_delivery
 
 
 logger = logging.getLogger(__name__)
@@ -222,9 +223,39 @@ async def deliver_notification(
         message = build_opening_email(context, current_settings)
     else:
         message = build_recovery_email(context, current_settings)
+
+    attempted_at = datetime.now(timezone.utc)
+    async with session_factory() as session:
+        async with session.begin():
+            delivery = await session.get(NotificationDelivery, context.delivery_id)
+            if delivery is None:
+                return "missing"
+            if delivery.status == "delivered":
+                return "already_delivered"
+            if delivery.status == "sending":
+                return "already_claimed"
+            if delivery.status == "failed":
+                return "failed"
+            transition_delivery(
+                delivery,
+                "sending",
+                occurred_at=attempted_at,
+            )
+
     try:
         provider_message_id = sender(message, current_settings)
     except (OSError, smtplib.SMTPException):
+        async with session_factory() as session:
+            async with session.begin():
+                delivery = await session.get(NotificationDelivery, context.delivery_id)
+                if delivery is not None and delivery.status == "sending":
+                    transition_delivery(
+                        delivery,
+                        "failed",
+                        occurred_at=datetime.now(timezone.utc),
+                        provider_error_code="smtp_error",
+                        provider_error_message="SMTP provider rejected delivery.",
+                    )
         logger.warning(
             "email_delivery_provider_failure",
             extra={"delivery_id": str(context.delivery_id)},
@@ -243,7 +274,10 @@ async def deliver_notification(
                 return "missing"
             if delivery.status == "delivered":
                 return "already_delivered"
-            delivery.status = "delivered"
-            delivery.delivered_at = delivered_at
-            delivery.provider_message_id = provider_message_id
+            transition_delivery(
+                delivery,
+                "delivered",
+                occurred_at=delivered_at,
+                provider_message_id=provider_message_id,
+            )
     return "delivered"

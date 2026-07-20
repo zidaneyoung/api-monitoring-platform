@@ -188,6 +188,8 @@ def test_opening_delivery_records_success_and_skips_normal_redelivery() -> None:
             assert second == "already_delivered"
             assert len(sent_messages) == 1
             assert persisted is not None and persisted.status == "delivered"
+            assert persisted.attempt_count == 1
+            assert persisted.last_attempt_at is not None
             assert persisted.delivered_at is not None
             assert persisted.provider_message_id == sent_messages[0]["Message-ID"]
             assert incident is not None and incident.status == "open"
@@ -225,7 +227,11 @@ def test_provider_failure_stays_controlled_and_preserves_incident(
                 persisted = await session.get(NotificationDelivery, delivery.id)
                 incident = await session.scalar(select(Incident))
             assert result == "provider_failed"
-            assert persisted is not None and persisted.status == "pending"
+            assert persisted is not None and persisted.status == "failed"
+            assert persisted.attempt_count == 1
+            assert persisted.last_attempt_at is not None
+            assert persisted.provider_error_code == "smtp_error"
+            assert persisted.provider_error_message == "SMTP provider rejected delivery."
             assert incident is not None and incident.status == "open"
             assert "email_delivery_provider_failure" in caplog.messages
             assert "smtp-password" not in caplog.text
@@ -266,6 +272,8 @@ def test_recovery_delivery_records_success_and_skips_normal_redelivery() -> None
             assert second == "already_delivered"
             assert len(sent_messages) == 1
             assert persisted is not None and persisted.status == "delivered"
+            assert persisted.attempt_count == 1
+            assert persisted.last_attempt_at is not None
             assert persisted.delivered_at is not None
             assert incident is not None and incident.status == "resolved"
             body = sent_messages[0].get_content()
@@ -305,6 +313,8 @@ def test_recovery_without_opening_delivery_is_not_sent() -> None:
             assert result == "invalid_lifecycle"
             assert sent_messages == []
             assert persisted is not None and persisted.status == "pending"
+            assert persisted.attempt_count == 0
+            assert persisted.last_attempt_at is None
             assert incident is not None and incident.status == "resolved"
         finally:
             await engine.dispose()
@@ -331,7 +341,10 @@ def test_recovery_provider_failure_preserves_resolved_incident() -> None:
                 persisted = await session.get(NotificationDelivery, delivery.id)
                 incident = await session.scalar(select(Incident))
             assert result == "provider_failed"
-            assert persisted is not None and persisted.status == "pending"
+            assert persisted is not None and persisted.status == "failed"
+            assert persisted.attempt_count == 1
+            assert persisted.last_attempt_at is not None
+            assert persisted.provider_error_code == "smtp_error"
             assert incident is not None and incident.status == "resolved"
             assert incident.resolved_at is not None
         finally:
