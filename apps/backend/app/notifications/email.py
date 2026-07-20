@@ -47,6 +47,16 @@ class OpeningEmailContext:
     cause_category: str | None
 
 
+@dataclass(frozen=True)
+class RecoveryEmailContext:
+    delivery_id: UUID
+    deduplication_key: str
+    destination: str
+    monitor_name: str
+    opened_at: datetime
+    resolved_at: datetime
+
+
 def _safe_header_text(value: str) -> str:
     return " ".join(value.replace("\r", " ").replace("\n", " ").split())
 
@@ -83,6 +93,41 @@ def build_opening_email(context: OpeningEmailContext, settings: Settings) -> Ema
     return message
 
 
+def _duration_text(opened_at: datetime, resolved_at: datetime) -> str:
+    total_seconds = max(0, int((resolved_at - opened_at).total_seconds()))
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    parts = []
+    if hours:
+        parts.append(f"{hours}h")
+    if minutes or hours:
+        parts.append(f"{minutes}m")
+    parts.append(f"{seconds}s")
+    return " ".join(parts)
+
+
+def build_recovery_email(
+    context: RecoveryEmailContext,
+    settings: Settings,
+) -> EmailMessage:
+    monitor_name = _safe_header_text(context.monitor_name)
+    message = EmailMessage()
+    message["Subject"] = f"Incident recovered: {monitor_name}"
+    message["From"] = settings.email_from
+    message["To"] = context.destination
+    message["Message-ID"] = _message_id(context.deduplication_key)
+    message.set_content(
+        "\n".join(
+            (
+                f"Monitor: {monitor_name}",
+                f"Recovered at: {_utc_text(context.resolved_at)}",
+                f"Incident duration: {_duration_text(context.opened_at, context.resolved_at)}",
+            )
+        )
+    )
+    return message
+
+
 def send_smtp_message(message: EmailMessage, settings: Settings) -> str:
     with smtplib.SMTP(
         settings.email_host,
@@ -99,11 +144,11 @@ def send_smtp_message(message: EmailMessage, settings: Settings) -> str:
     return str(message["Message-ID"])
 
 
-async def _load_opening_context(
+async def _load_email_context(
     delivery_id: UUID,
     *,
     session_factory: async_sessionmaker[AsyncSession],
-) -> OpeningEmailContext | str:
+) -> OpeningEmailContext | RecoveryEmailContext | str:
     async with session_factory() as session:
         row = (
             await session.execute(
@@ -116,17 +161,39 @@ async def _load_opening_context(
     if row is None:
         return "missing"
     delivery, incident, monitor = row
-    if delivery.channel != "email" or delivery.event_type != "incident_opened":
+    if delivery.channel != "email":
         return "unsupported"
     if delivery.status == "delivered":
         return "already_delivered"
-    return OpeningEmailContext(
-        delivery_id=delivery.id,
-        deduplication_key=delivery.deduplication_key,
-        destination=delivery.destination,
-        monitor_name=monitor.name,
-        opened_at=incident.opened_at,
-        cause_category=incident.cause_category,
+    common = {
+        "delivery_id": delivery.id,
+        "deduplication_key": delivery.deduplication_key,
+        "destination": delivery.destination,
+        "monitor_name": monitor.name,
+        "opened_at": incident.opened_at,
+    }
+    if delivery.event_type == "incident_opened":
+        return OpeningEmailContext(
+            **common,
+            cause_category=incident.cause_category,
+        )
+    if delivery.event_type != "incident_recovered":
+        return "unsupported"
+    if incident.status != "resolved" or incident.resolved_at is None:
+        return "invalid_lifecycle"
+    async with session_factory() as session:
+        opening_delivery_id = await session.scalar(
+            select(NotificationDelivery.id).where(
+                NotificationDelivery.incident_id == incident.id,
+                NotificationDelivery.channel == "email",
+                NotificationDelivery.event_type == "incident_opened",
+            )
+        )
+    if opening_delivery_id is None:
+        return "invalid_lifecycle"
+    return RecoveryEmailContext(
+        **common,
+        resolved_at=incident.resolved_at,
     )
 
 
@@ -143,7 +210,7 @@ async def deliver_notification(
         logger.warning("email_delivery_invalid_identifier")
         return "missing"
 
-    context = await _load_opening_context(
+    context = await _load_email_context(
         parsed_delivery_id,
         session_factory=session_factory,
     )
@@ -151,7 +218,10 @@ async def deliver_notification(
         return context
 
     current_settings = settings or load_settings()
-    message = build_opening_email(context, current_settings)
+    if isinstance(context, OpeningEmailContext):
+        message = build_opening_email(context, current_settings)
+    else:
+        message = build_recovery_email(context, current_settings)
     try:
         provider_message_id = sender(message, current_settings)
     except (OSError, smtplib.SMTPException):
