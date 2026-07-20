@@ -1,3 +1,4 @@
+import { StrictMode } from "react"
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import Link from "next/link"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
@@ -84,7 +85,22 @@ describe("MonitorForm", () => {
       url: "https://example.com/health",
     }), { status: 201 })))
     expect(navigationMock.push).toHaveBeenCalledWith("/monitors")
-    expect(navigationMock.refresh).toHaveBeenCalledOnce()
+    expect(navigationMock.refresh).not.toHaveBeenCalled()
+  })
+
+  it("navigates after a development effect remount", async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      id: "monitor-1",
+      name: "Public API",
+      url: "https://example.com/health",
+    }), { status: 201 }))
+    render(<StrictMode><MonitorForm /></StrictMode>)
+    fillRequiredFields()
+
+    fireEvent.click(screen.getByRole("button", { name: "Create monitor" }))
+
+    await waitFor(() => expect(navigationMock.push).toHaveBeenCalledWith("/monitors"))
+    expect(screen.queryByRole("button", { name: "Creating monitor…" })).toBeNull()
   })
 
   it("shows field-specific validation and preserves entered values", async () => {
@@ -176,7 +192,7 @@ describe("MonitorForm", () => {
       interval_seconds: 300,
     })
     expect(navigationMock.push).toHaveBeenCalledWith(successHref)
-    expect(navigationMock.refresh).toHaveBeenCalledOnce()
+    expect(navigationMock.refresh).not.toHaveBeenCalled()
     const savedUnload = new Event("beforeunload", { cancelable: true })
     window.dispatchEvent(savedUnload)
     expect(savedUnload.defaultPrevented).toBe(false)

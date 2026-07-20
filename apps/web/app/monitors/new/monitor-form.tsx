@@ -123,9 +123,12 @@ export function MonitorForm({ monitor, successHref }: { monitor?: MonitorDto; su
     if (errorVersion > 0) errorSummaryRef.current?.focus()
   }, [errorVersion])
 
-  useEffect(() => () => {
-    mountedRef.current = false
-    mutationVersionRef.current += 1
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      mutationVersionRef.current += 1
+    }
   }, [])
 
   useEffect(() => {
@@ -206,7 +209,6 @@ export function MonitorForm({ monitor, successHref }: { monitor?: MonitorDto; su
     if (outcome.type === "success") {
       dirtyRef.current = false
       router.push(successHref ?? (monitor ? `/monitors/${monitor.id}` : "/monitors"))
-      router.refresh()
       return
     }
     showErrors(adaptMonitorFormFailure(outcome, isEditing ? "edit" : "create"))
