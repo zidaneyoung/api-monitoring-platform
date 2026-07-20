@@ -26,3 +26,18 @@ def test_email_delivery_is_routed_to_the_dedicated_queue(monkeypatch) -> None:
 def test_email_delivery_task_is_registered_on_dedicated_queue() -> None:
     assert EMAIL_DELIVERY_TASK in celery_app.tasks
     assert celery_app.conf.task_routes[EMAIL_DELIVERY_TASK] == {"queue": "email"}
+
+
+def test_email_retry_uses_same_task_and_countdown(monkeypatch) -> None:
+    send_task = Mock()
+    monkeypatch.setattr("app.notifications.dispatcher.celery_app.send_task", send_task)
+    delivery_id = uuid4()
+
+    asyncio.run(enqueue_notification_delivery(delivery_id, countdown=120))
+
+    send_task.assert_called_once_with(
+        EMAIL_DELIVERY_TASK,
+        args=[str(delivery_id)],
+        queue="email",
+        countdown=120,
+    )

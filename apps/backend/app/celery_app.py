@@ -72,7 +72,11 @@ def execute_monitor_run_task(run_id: str) -> dict[str, str | bool]:
     return asyncio.run(run_task())
 
 
-@celery_app.task(name=EMAIL_DELIVERY_TASK)
+@celery_app.task(
+    name=EMAIL_DELIVERY_TASK,
+    acks_late=True,
+    reject_on_worker_lost=True,
+)
 def deliver_notification_task(delivery_id: str) -> str:
     """Deliver one durable email record on the dedicated email queue."""
 

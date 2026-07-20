@@ -1,11 +1,12 @@
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 import hashlib
+import inspect
 import logging
 import smtplib
 import ssl
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from uuid import UUID
 
 from sqlalchemy import select
@@ -14,11 +15,21 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.config import Settings, load_settings
 from app.database import SessionFactory
 from app.models import Incident, Monitor, NotificationDelivery
+from app.notifications.claim import claim_notification_delivery
+from app.notifications.delivery_state import transition_delivery
+from app.notifications.retry import (
+    MAX_EMAIL_ATTEMPTS,
+    classify_provider_failure,
+    retry_delay_seconds,
+    schedule_notification_retry,
+)
 
 
 logger = logging.getLogger(__name__)
 
-EmailSender = Callable[[EmailMessage, Settings], str]
+EmailSender = Callable[[EmailMessage, Settings], str | Awaitable[str]]
+Clock = Callable[[], datetime]
+RetryScheduler = Callable[[UUID, int], Awaitable[None]]
 
 SAFE_FAILURE_SUMMARIES = {
     "unexpected_status": "HTTP status was outside the accepted range.",
@@ -203,6 +214,8 @@ async def deliver_notification(
     session_factory: async_sessionmaker[AsyncSession] = SessionFactory,
     sender: EmailSender = send_smtp_message,
     settings: Settings | None = None,
+    retry_scheduler: RetryScheduler = schedule_notification_retry,
+    clock: Clock | None = None,
 ) -> str:
     try:
         parsed_delivery_id = UUID(str(delivery_id))
@@ -222,16 +235,71 @@ async def deliver_notification(
         message = build_opening_email(context, current_settings)
     else:
         message = build_recovery_email(context, current_settings)
+
+    now = clock or (lambda: datetime.now(timezone.utc))
+    attempted_at = now()
+    claim_result = await claim_notification_delivery(
+        context.delivery_id,
+        attempted_at=attempted_at,
+        session_factory=session_factory,
+    )
+    if claim_result != "claimed":
+        return claim_result
+
     try:
         provider_message_id = sender(message, current_settings)
-    except (OSError, smtplib.SMTPException):
+        if inspect.isawaitable(provider_message_id):
+            provider_message_id = await provider_message_id
+    except (OSError, smtplib.SMTPException) as error:
+        failure = classify_provider_failure(error)
+        retry_delay: int | None = None
+        async with session_factory() as session:
+            async with session.begin():
+                delivery = await session.get(NotificationDelivery, context.delivery_id)
+                if delivery is not None and delivery.status == "sending":
+                    failed_at = now()
+                    if failure.temporary and delivery.attempt_count < MAX_EMAIL_ATTEMPTS:
+                        retry_delay = retry_delay_seconds(delivery.attempt_count)
+                        transition_delivery(
+                            delivery,
+                            "retrying",
+                            occurred_at=failed_at,
+                            next_retry_at=failed_at + timedelta(seconds=retry_delay),
+                            provider_error_code=failure.error_code,
+                            provider_error_message=failure.safe_message,
+                        )
+                    else:
+                        transition_delivery(
+                            delivery,
+                            "failed",
+                            occurred_at=failed_at,
+                            provider_error_code=(
+                                "attempts_exhausted"
+                                if failure.temporary
+                                else failure.error_code
+                            ),
+                            provider_error_message=(
+                                "Maximum email delivery attempts exhausted."
+                                if failure.temporary
+                                else failure.safe_message
+                            ),
+                        )
         logger.warning(
             "email_delivery_provider_failure",
             extra={"delivery_id": str(context.delivery_id)},
         )
-        return "provider_failed"
+        if retry_delay is not None:
+            try:
+                await retry_scheduler(context.delivery_id, retry_delay)
+            except Exception:
+                logger.warning(
+                    "email_retry_enqueue_failed",
+                    extra={"delivery_id": str(context.delivery_id)},
+                )
+            return "retrying"
+        return "failed"
 
-    delivered_at = datetime.now(timezone.utc)
+    delivered_at = now()
     async with session_factory() as session:
         async with session.begin():
             delivery = await session.scalar(
@@ -243,7 +311,10 @@ async def deliver_notification(
                 return "missing"
             if delivery.status == "delivered":
                 return "already_delivered"
-            delivery.status = "delivered"
-            delivery.delivered_at = delivered_at
-            delivery.provider_message_id = provider_message_id
+            transition_delivery(
+                delivery,
+                "delivered",
+                occurred_at=delivered_at,
+                provider_message_id=provider_message_id,
+            )
     return "delivered"
