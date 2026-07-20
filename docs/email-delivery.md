@@ -19,3 +19,21 @@ SMTP calls never run in those transactions.
 
 Stored error codes and messages are fixed safe categories. SMTP response bodies,
 credentials, and exception text are not persisted or logged.
+
+## Deduplication, claiming, and crash behavior
+
+- The database unique constraint on `deduplication_key` prevents multiple delivery
+  rows for one event, channel, and destination.
+- A PostgreSQL conditional update atomically changes one due `pending` or `retrying`
+  row to `sending`. Only the worker receiving the returned row may call SMTP.
+- Celery acknowledges email tasks late. Redelivery before the database claim can be
+  claimed normally; redelivery after a claim sees `sending` and does not send again.
+- A crash before the database claim leaves `pending`/`retrying` and can be redelivered.
+- A crash after the claim but before SMTP, during SMTP, or after SMTP handoff but
+  before `delivered` leaves the row in `sending` with its attempt timestamp. This is
+  an intentionally conservative, ambiguous outcome requiring reconciliation; it is
+  not retried automatically because SMTP handoff cannot provide exactly-once delivery.
+- `delivered` and `failed` are terminal and are never claimed again.
+
+This design prevents concurrent duplicate sends and prefers avoiding duplicates in
+the SMTP ambiguity window. It does not claim exactly-once external delivery.

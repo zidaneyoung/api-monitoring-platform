@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 import hashlib
+import inspect
 import logging
 import smtplib
 import ssl
@@ -14,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.config import Settings, load_settings
 from app.database import SessionFactory
 from app.models import Incident, Monitor, NotificationDelivery
+from app.notifications.claim import claim_notification_delivery
 from app.notifications.delivery_state import transition_delivery
 from app.notifications.retry import (
     MAX_EMAIL_ATTEMPTS,
@@ -25,7 +27,7 @@ from app.notifications.retry import (
 
 logger = logging.getLogger(__name__)
 
-EmailSender = Callable[[EmailMessage, Settings], str]
+EmailSender = Callable[[EmailMessage, Settings], str | Awaitable[str]]
 Clock = Callable[[], datetime]
 RetryScheduler = Callable[[UUID, int], Awaitable[None]]
 
@@ -236,31 +238,18 @@ async def deliver_notification(
 
     now = clock or (lambda: datetime.now(timezone.utc))
     attempted_at = now()
-    async with session_factory() as session:
-        async with session.begin():
-            delivery = await session.get(NotificationDelivery, context.delivery_id)
-            if delivery is None:
-                return "missing"
-            if delivery.status == "delivered":
-                return "already_delivered"
-            if delivery.status == "sending":
-                return "already_claimed"
-            if delivery.status == "failed":
-                return "failed"
-            if (
-                delivery.status == "retrying"
-                and delivery.next_retry_at is not None
-                and delivery.next_retry_at > attempted_at
-            ):
-                return "not_due"
-            transition_delivery(
-                delivery,
-                "sending",
-                occurred_at=attempted_at,
-            )
+    claim_result = await claim_notification_delivery(
+        context.delivery_id,
+        attempted_at=attempted_at,
+        session_factory=session_factory,
+    )
+    if claim_result != "claimed":
+        return claim_result
 
     try:
         provider_message_id = sender(message, current_settings)
+        if inspect.isawaitable(provider_message_id):
+            provider_message_id = await provider_message_id
     except (OSError, smtplib.SMTPException) as error:
         failure = classify_provider_failure(error)
         retry_delay: int | None = None
