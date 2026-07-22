@@ -25,3 +25,18 @@ npm test -- --run lib/monitor-time.test.ts lib/monitor-result.test.ts lib/monito
 Both commands are non-interactive and return a nonzero exit code when any selected test fails.
 Tests control DNS, HTTP results, timezones, and process state locally; they require no
 production credentials or production services.
+
+## SSRF security tests
+
+Run destination-classification, fresh-resolution, and redirect-chain security tests
+from `apps/backend`:
+
+```powershell
+python -m pytest tests/test_monitor_destinations.py tests/test_monitor_redirect_security.py -q
+```
+
+Resolvers and HTTP transports are fully controlled. Restricted, loopback, private,
+link-local, metadata, multicast, reserved, and unspecified destinations are never
+passed to a real socket. Each redirect target is validated before the controlled
+transport can observe a request, while public IPv4, IPv6, hostname, and redirect
+destinations remain accepted.
