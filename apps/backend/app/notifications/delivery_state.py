@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from app.models import NotificationDelivery
+from app.utc import as_utc
 
 
 class DeliveryTransitionError(ValueError):
@@ -26,6 +27,9 @@ def transition_delivery(
     provider_error_code: str | None = None,
     provider_error_message: str | None = None,
 ) -> None:
+    occurred_at = as_utc(occurred_at)
+    if next_retry_at is not None:
+        next_retry_at = as_utc(next_retry_at)
     allowed = ALLOWED_TRANSITIONS.get(delivery.status, frozenset())
     if target_status not in allowed:
         raise DeliveryTransitionError(

@@ -1,4 +1,6 @@
-from datetime import UTC, datetime
+from datetime import datetime
+
+from app.utc import elapsed_seconds, utc_now
 
 
 def incident_duration_seconds(
@@ -9,13 +11,6 @@ def incident_duration_seconds(
 ) -> int:
     """Return a non-negative incident duration using UTC timestamps."""
 
-    current_time = now or datetime.now(UTC)
+    current_time = now or utc_now()
     end_time = resolved_at or current_time
-    elapsed = _as_utc(end_time) - _as_utc(opened_at)
-    return max(0, int(elapsed.total_seconds()))
-
-
-def _as_utc(value: datetime) -> datetime:
-    if value.tzinfo is None:
-        return value.replace(tzinfo=UTC)
-    return value.astimezone(UTC)
+    return elapsed_seconds(opened_at, end_time)

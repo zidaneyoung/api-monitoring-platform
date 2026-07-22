@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Literal
 from uuid import UUID, uuid4
 
@@ -26,6 +26,7 @@ from app.security.monitor_destinations import (
     get_destination_resolver,
     validate_monitor_destination,
 )
+from app.utc import utc_now
 
 
 router = APIRouter(prefix="/monitors", tags=["monitors"])
@@ -197,7 +198,7 @@ async def get_monitor_response_times(
     session: AsyncSession = Depends(get_database_session),
 ) -> MonitorResponseTimeSeriesResponse:
     await _owned_monitor(session, monitor_id, authenticated.user.id)
-    ended_at = datetime.now(timezone.utc)
+    ended_at = utc_now()
     started_at = ended_at - timedelta(hours=24)
     result = await session.execute(
         select(MonitorCheck)
@@ -289,7 +290,7 @@ async def resume_monitor(
     session: AsyncSession = Depends(get_database_session),
 ) -> Monitor:
     monitor = await _owned_monitor(session, monitor_id, authenticated.user.id)
-    now = datetime.now(timezone.utc)
+    now = utc_now()
     if (
         monitor.status != "paused"
         and monitor.is_enabled
@@ -365,7 +366,7 @@ async def update_monitor(
     for field in _CONFIGURATION_FIELDS:
         setattr(monitor, field, getattr(payload, field))
     if interval_changed and monitor.is_enabled:
-        monitor.next_check_at = datetime.now(timezone.utc) + timedelta(
+        monitor.next_check_at = utc_now() + timedelta(
             seconds=payload.interval_seconds
         )
 
@@ -414,7 +415,7 @@ async def create_monitor(
         is_enabled=True,
         consecutive_failures=0,
         consecutive_successes=0,
-        next_check_at=datetime.now(timezone.utc)
+        next_check_at=utc_now()
         + timedelta(seconds=payload.interval_seconds),
     )
     session.add(monitor)

@@ -1,6 +1,6 @@
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 import hashlib
 import logging
 import socket
@@ -34,6 +34,7 @@ from app.security.monitor_destinations import (
     validate_before_connection,
     validate_redirect_destination,
 )
+from app.utc import utc_now
 
 
 logger = logging.getLogger(__name__)
@@ -272,9 +273,7 @@ def _certificate_expiration(response: httpx.Response) -> datetime | None:
     if not isinstance(not_after, str):
         return None
     try:
-        return datetime.strptime(not_after, "%b %d %H:%M:%S %Y %Z").replace(
-            tzinfo=timezone.utc
-        )
+        return datetime.strptime(not_after, "%b %d %H:%M:%S %Y %Z").replace(tzinfo=UTC)
     except ValueError:
         return None
 
@@ -297,7 +296,7 @@ async def _expire_run(
                 if run.status in {"completed", "failed", "expired"}:
                     return MonitorExecutionResult("skipped", False)
                 run.status = "expired"
-                run.completed_at = datetime.now(timezone.utc)
+                run.completed_at = utc_now()
                 logger.info(
                     "monitor_worker_run_expired",
                     extra={"monitor_run_id": str(run.id)},
@@ -329,10 +328,10 @@ async def _claim_run(
                 monitor = await session.get(Monitor, run.monitor_id)
                 if not monitor_can_execute_request(monitor):
                     run.status = "expired"
-                    run.completed_at = datetime.now(timezone.utc)
+                    run.completed_at = utc_now()
                     return MonitorExecutionResult("expired", False)
 
-                claimed_at = datetime.now(timezone.utc)
+                claimed_at = utc_now()
                 run.status = "running"
                 run.claimed_at = claimed_at
                 run.started_at = claimed_at
@@ -362,7 +361,7 @@ async def _load_active_request(
                     return MonitorExecutionResult("missing", False)
                 if not monitor_can_execute_request(monitor):
                     run.status = "expired"
-                    run.completed_at = datetime.now(timezone.utc)
+                    run.completed_at = utc_now()
                     return MonitorExecutionResult("expired", False)
                 return MonitorRequest(
                     monitor_id=monitor.id,
@@ -452,7 +451,7 @@ async def _complete_run(
     session_factory: async_sessionmaker[AsyncSession],
     notification_enqueuer: NotificationEnqueuer,
 ) -> MonitorExecutionResult:
-    completed_at = datetime.now(timezone.utc)
+    completed_at = utc_now()
     delivery_id: UUID | None = None
     try:
         async with session_factory() as session:
@@ -568,7 +567,7 @@ async def execute_monitor_run(
     if isinstance(request_or_result, MonitorExecutionResult):
         return request_or_result
 
-    started_at = datetime.now(timezone.utc)
+    started_at = utc_now()
     response_time_ms: int | None = None
     http_status_code: int | None = None
     tls_expires_at: datetime | None = None

@@ -141,9 +141,10 @@ def test_login_threshold_short_circuits_and_retries_after_window(
     assert [response.status_code for response in failures] == [401] * 5
     assert limited.status_code == 429
     assert limited.json() == {
-        "detail": {
+        "error": {
             "code": "rate_limited",
             "message": "Too many authentication attempts. Try again later.",
+            "retry_after_seconds": 60,
         }
     }
     assert limited.headers["retry-after"] == "60"
@@ -237,7 +238,7 @@ def test_rate_limit_store_failure_is_controlled_and_fails_closed(
 
     assert response.status_code == 503
     assert response.json() == {
-        "detail": {
+        "error": {
             "code": "rate_limit_unavailable",
             "message": "Unable to process authentication. Try again later.",
         }
@@ -279,7 +280,7 @@ def test_unsafe_authentication_routes_reject_an_unapproved_origin(
 
     assert response.status_code == 403
     assert response.json() == {
-        "detail": {
+        "error": {
             "code": "origin_not_allowed",
             "message": "Authentication request origin is not allowed.",
         }
@@ -307,7 +308,7 @@ def test_approved_frontend_origin_continues_to_authenticate(
         app.dependency_overrides.clear()
 
     assert response.status_code == 401
-    assert response.json()["detail"]["code"] == "invalid_credentials"
+    assert response.json()["error"]["code"] == "invalid_credentials"
     assert len(store.calls) == 3
 
 
@@ -331,7 +332,7 @@ def test_missing_origin_follows_the_configured_policy(
         app.dependency_overrides.clear()
 
     assert response.status_code == 403
-    assert response.json()["detail"]["code"] == "origin_not_allowed"
+    assert response.json()["error"]["code"] == "origin_not_allowed"
     assert store.calls == []
 
 

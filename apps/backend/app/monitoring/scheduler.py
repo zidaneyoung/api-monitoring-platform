@@ -1,6 +1,6 @@
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 import logging
 
 from sqlalchemy import select
@@ -11,6 +11,7 @@ from app.celery_app import celery_app
 from app.database import SessionFactory
 from app.models import Monitor, MonitorRun
 from app.monitoring.state import monitor_is_scheduler_eligible
+from app.utc import as_utc, utc_now
 
 
 logger = logging.getLogger(__name__)
@@ -120,7 +121,7 @@ async def _enqueue_pending_monitor_runs(
                     except Exception as error:
                         raise QueueDispatchError from error
 
-                    run.enqueued_at = datetime.now(timezone.utc)
+                    run.enqueued_at = utc_now()
                     enqueued += 1
                     logger.info(
                         "monitor_scheduler_run_enqueued",
@@ -143,7 +144,7 @@ async def dispatch_due_monitors(
     """Create due runs, then queue every durable run awaiting dispatch."""
 
     scheduled = await _schedule_due_monitors(
-        now=now or datetime.now(timezone.utc),
+        now=as_utc(now) if now is not None else utc_now(),
         session_factory=session_factory,
     )
     enqueued = await _enqueue_pending_monitor_runs(

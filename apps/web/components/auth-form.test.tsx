@@ -93,7 +93,7 @@ describe("AuthForm", () => {
 
   it("shows a generic invalid-credential response without redirecting", async () => {
     fetchMock.mockResolvedValue(new Response(JSON.stringify({
-      detail: { code: "invalid_credentials", message: "Invalid email or password." },
+      error: { code: "invalid_credentials", message: "Invalid email or password." },
     }), { status: 401, headers: { "Content-Type": "application/json" } }))
     render(<AuthForm mode="login" />)
 
@@ -168,7 +168,11 @@ describe("AuthForm", () => {
 
   it("shows a safe field-specific backend registration error", async () => {
     fetchMock.mockResolvedValue(new Response(JSON.stringify({
-      detail: { field: "email", message: "An account with this email already exists." },
+      error: {
+        code: "email_exists",
+        message: "An account with this email already exists.",
+        fields: [{ field: "email", message: "An account with this email already exists." }],
+      },
     }), { status: 409, headers: { "Content-Type": "application/json" } }))
     render(<AuthForm mode="register" />)
 

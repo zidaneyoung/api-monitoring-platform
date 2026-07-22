@@ -7,6 +7,7 @@ import { EmptyState, ErrorState, LoadingState } from "@/components/states"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { getMonitorResponseTimes, type MonitorResponseTimeSeriesDto } from "@/lib/monitor-api"
+import { formatMonitorTimestamp, parseApiTimestamp } from "@/lib/monitor-time"
 
 type ResponseTimeChartState =
   | { type: "loading" }
@@ -14,17 +15,14 @@ type ResponseTimeChartState =
   | { type: "error" }
 
 function chartTime(value: string): string {
-  const parsed = new Date(value)
-  return Number.isFinite(parsed.getTime())
-    ? new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(parsed)
-    : "Unavailable"
+  const timestamp = parseApiTimestamp(value)
+  return timestamp === null
+    ? "Unavailable"
+    : new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(timestamp)
 }
 
 function tooltipTime(value: string): string {
-  const parsed = new Date(value)
-  return Number.isFinite(parsed.getTime())
-    ? new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(parsed)
-    : "Unavailable"
+  return formatMonitorTimestamp(value).display
 }
 
 export function ResponseTimeChart({ monitorId }: { monitorId: string }) {
@@ -56,7 +54,8 @@ export function ResponseTimeChart({ monitorId }: { monitorId: string }) {
   }
 
   const chartData = state.data.points
-    .map((point) => ({ ...point, timestamp: new Date(point.completed_at).getTime() }))
+    .map((point) => ({ ...point, timestamp: parseApiTimestamp(point.completed_at) }))
+    .filter((point): point is typeof point & { timestamp: number } => point.timestamp !== null)
     .sort((left, right) => left.timestamp - right.timestamp)
   const measuredPoints = chartData.filter((point) => point.response_time_ms !== null)
   if (chartData.length === 0 || measuredPoints.length === 0) {

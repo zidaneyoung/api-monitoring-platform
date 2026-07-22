@@ -1,3 +1,5 @@
+import { readApiError } from "@/lib/api-error"
+
 export type AuthField = "email" | "password" | "form"
 
 export type AuthError = {
@@ -30,10 +32,6 @@ export type LogoutOutcome =
   | { type: "network_error" }
   | { type: "unexpected_response" }
 
-type ErrorPayload = {
-  errors?: Array<{ field?: string; message?: string }>
-}
-
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000"
 const AUTH_REQUEST_TIMEOUT_MS = 10_000
 const AUTH_STATE_TIMEOUT_MS = 5_000
@@ -45,16 +43,12 @@ function normalizeField(field: string | undefined): AuthField {
 }
 
 async function readValidationErrors(response: Response): Promise<AuthError[]> {
-  try {
-    const payload = (await response.json()) as ErrorPayload
-    if (payload.errors?.length) {
-      return payload.errors.slice(0, 4).map((error) => ({
-        field: normalizeField(error.field),
-        message: error.message ?? "Enter a valid value.",
-      }))
-    }
-  } catch {
-    // Malformed validation responses receive the same controlled fallback.
+  const error = await readApiError(response)
+  if (error?.fields.length) {
+    return error.fields.slice(0, 4).map((field) => ({
+      field: normalizeField(field.field),
+      message: field.message,
+    }))
   }
 
   return [{ field: "form", message: "Check the highlighted fields and try again." }]

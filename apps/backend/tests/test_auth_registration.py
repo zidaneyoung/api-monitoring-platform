@@ -137,7 +137,7 @@ def test_duplicate_email_is_rejected_before_insert(
     )
 
     assert response.status_code == 409
-    assert response.json()["detail"]["field"] == "email"
+    assert response.json()["error"]["fields"][0]["field"] == "email"
     assert session.added == []
     assert store.created_for == []
     assert response.headers["cache-control"] == "no-store"
@@ -201,7 +201,7 @@ def test_session_failure_rolls_back_user_without_setting_cookie(
     app.dependency_overrides.clear()
 
     assert response.status_code == 503
-    assert response.json()["detail"]["code"] == "session_unavailable"
+    assert response.json()["error"]["code"] == "session_unavailable"
     assert session.rollbacks == 1
     assert session.commits == 0
     assert "amp_session" not in response.cookies
@@ -234,7 +234,7 @@ def test_database_commit_failure_deletes_created_session(
     app.dependency_overrides.clear()
 
     assert response.status_code == 503
-    assert response.json()["detail"]["code"] == "database_unavailable"
+    assert response.json()["error"]["code"] == "database_unavailable"
     assert session.rollbacks == 1
     assert store.deleted_tokens == [store.token]
     assert "amp_session" not in response.cookies
@@ -257,7 +257,7 @@ def test_invalid_registration_is_field_specific_and_does_not_echo_input(
     response = client.post("/auth/register", json=payload)
 
     assert response.status_code == 422
-    assert response.json()["errors"][0]["field"] in {"email", "password"}
+    assert response.json()["error"]["fields"][0]["field"] in {"email", "password"}
     assert payload["email"] not in response.text
     assert payload["password"] not in response.text
     assert session.added == []

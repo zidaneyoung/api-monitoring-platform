@@ -65,6 +65,7 @@ async def seed_incidents() -> tuple[User, User, dict[str, UUID]]:
             owner_resolved_monitor = make_monitor(owner, "Owned resolved")
             owner_open_monitor = make_monitor(owner, "Owned open")
             foreign_monitor = make_monitor(other, "Foreign")
+            mismatched_monitor = make_monitor(other, "Mismatched foreign")
             session.add_all(
                 [
                     owner,
@@ -72,6 +73,7 @@ async def seed_incidents() -> tuple[User, User, dict[str, UUID]]:
                     owner_resolved_monitor,
                     owner_open_monitor,
                     foreign_monitor,
+                    mismatched_monitor,
                 ]
             )
             await session.flush()
@@ -146,12 +148,21 @@ async def seed_incidents() -> tuple[User, User, dict[str, UUID]]:
                 opened_at=foreign_opened_at,
                 detected_at=foreign_opened_at,
             )
-            session.add_all([active, foreign])
+            mismatched = Incident(
+                monitor=mismatched_monitor,
+                user=owner,
+                status="resolved",
+                opened_at=foreign_opened_at - timedelta(hours=1),
+                detected_at=foreign_opened_at - timedelta(hours=1),
+                resolved_at=foreign_opened_at,
+            )
+            session.add_all([active, foreign, mismatched])
             await session.commit()
             return owner, other, {
                 "resolved": resolved.id,
                 "active": active.id,
                 "foreign": foreign.id,
+                "mismatched": mismatched.id,
             }
     finally:
         await engine.dispose()
@@ -209,6 +220,39 @@ async def seed_resolved_incident_page() -> tuple[User, list[UUID]]:
             )
             await session.commit()
             return owner, [incident.id for incident in reversed(resolved)]
+    finally:
+        await engine.dispose()
+
+
+async def seed_incident_with_foreign_check() -> tuple[User, UUID, UUID]:
+    engine = create_database_engine(database_url())
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        async with sessions() as session:
+            await session.execute(text("DELETE FROM users"))
+            owner = User(email=f"owner-{uuid4()}@example.com", password_hash="hash")
+            other = User(email=f"other-{uuid4()}@example.com", password_hash="hash")
+            owner_monitor = make_monitor(owner, "Owned incident")
+            foreign_monitor = make_monitor(other, "Foreign check")
+            foreign_check = MonitorCheck(
+                monitor=foreign_monitor,
+                started_at=datetime(2026, 7, 12, 10, 0, tzinfo=UTC),
+                completed_at=datetime(2026, 7, 12, 10, 0, 1, tzinfo=UTC),
+                success=False,
+                error_category="connection",
+                error_message="Foreign check detail must remain hidden.",
+            )
+            incident = Incident(
+                monitor=owner_monitor,
+                user=owner,
+                status="open",
+                opened_at=datetime(2026, 7, 12, 10, 1, tzinfo=UTC),
+                detected_at=datetime(2026, 7, 12, 10, 1, tzinfo=UTC),
+                triggering_check=foreign_check,
+            )
+            session.add_all([owner, other, incident])
+            await session.commit()
+            return owner, incident.id, foreign_check.id
     finally:
         await engine.dispose()
 
@@ -358,13 +402,43 @@ def test_incident_details_hide_foreign_and_missing_incidents() -> None:
     try:
         with TestClient(app) as client:
             foreign = client.get(f"/incidents/{incident_ids['foreign']}")
+            mismatched = client.get(f"/incidents/{incident_ids['mismatched']}")
             missing = client.get(f"/incidents/{uuid4()}")
     finally:
         app.dependency_overrides.pop(get_database_session, None)
         app.dependency_overrides.pop(require_authenticated_session, None)
 
-    assert foreign.status_code == missing.status_code == 404
-    assert foreign.json()["detail"] == missing.json()["detail"] == {
-        "code": "incident_not_found",
-        "message": "Incident not found.",
-    }
+    assert (
+        foreign.status_code
+        == mismatched.status_code
+        == missing.status_code
+        == 404
+    )
+    assert (
+        foreign.json()["error"]
+        == mismatched.json()["error"]
+        == missing.json()["error"]
+        == {
+            "code": "incident_not_found",
+            "message": "Incident not found.",
+        }
+    )
+
+
+def test_incident_details_hide_check_from_another_users_monitor() -> None:
+    owner, incident_id, foreign_check_id = asyncio.run(
+        seed_incident_with_foreign_check()
+    )
+    app.dependency_overrides[get_database_session] = override_database_session
+    app.dependency_overrides[require_authenticated_session] = authenticated_as(owner)
+    try:
+        with TestClient(app) as client:
+            response = client.get(f"/incidents/{incident_id}")
+    finally:
+        app.dependency_overrides.pop(get_database_session, None)
+        app.dependency_overrides.pop(require_authenticated_session, None)
+
+    assert response.status_code == 200
+    assert response.json()["triggering_check"] is None
+    assert str(foreign_check_id) not in response.text
+    assert "Foreign check detail" not in response.text

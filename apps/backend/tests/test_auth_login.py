@@ -127,7 +127,7 @@ def test_invalid_credentials_use_same_generic_response(
 
     assert response.status_code == 401
     assert response.json() == {
-        "detail": {
+        "error": {
             "code": "invalid_credentials",
             "message": "Invalid email or password.",
         }
@@ -153,7 +153,7 @@ def test_disabled_user_cannot_log_in_and_gets_generic_response(
     )
 
     assert response.status_code == 401
-    assert response.json()["detail"]["message"] == "Invalid email or password."
+    assert response.json()["error"]["message"] == "Invalid email or password."
     assert store.created_for == []
 
 

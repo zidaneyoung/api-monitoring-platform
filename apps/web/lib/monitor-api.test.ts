@@ -56,7 +56,11 @@ describe("createMonitor", () => {
 
   it("returns safe field validation errors", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      errors: [{ field: "url", message: "Enter a valid HTTP or HTTPS URL." }],
+      error: {
+        code: "validation_error",
+        message: "Request validation failed.",
+        fields: [{ field: "url", message: "Enter a valid HTTP or HTTPS URL." }],
+      },
     }), { status: 422 })))
 
     await expect(createMonitor(payload)).resolves.toEqual({
@@ -67,7 +71,7 @@ describe("createMonitor", () => {
 
   it("maps a blocked destination response to the URL field", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      detail: {
+      error: {
         code: "unsafe_monitor_destination",
         message: "Monitor URL must resolve to a public destination.",
       },
@@ -130,7 +134,7 @@ describe("updateMonitor", () => {
 
   it("maps a blocked edited destination to the URL field", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      detail: {
+      error: {
         code: "unsafe_monitor_destination",
         message: "Monitor URL must resolve to a public destination.",
       },

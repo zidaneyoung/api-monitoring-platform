@@ -4,8 +4,13 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app.api_errors import validation_error_response
+from app.api_errors import (
+    http_error_response,
+    internal_error_response,
+    validation_error_response,
+)
 from app.config import load_settings
 from app.database import dispose_database_engine
 from app.health import router as health_router
@@ -40,6 +45,8 @@ app.add_middleware(
     allow_headers=["Content-Type"],
 )
 app.add_exception_handler(RequestValidationError, validation_error_response)
+app.add_exception_handler(StarletteHTTPException, http_error_response)
+app.add_exception_handler(Exception, internal_error_response)
 app.include_router(health_router)
 app.include_router(auth_router)
 app.include_router(incidents_router)

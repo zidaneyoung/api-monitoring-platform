@@ -1,3 +1,5 @@
+import { readApiError } from "@/lib/api-error"
+
 export type MonitorStatus = "unknown" | "up" | "down" | "paused"
 export type MonitorHttpMethod = "GET" | "HEAD"
 
@@ -104,11 +106,6 @@ export type MonitorReadOptions = {
   signal?: AbortSignal
 }
 
-type ErrorPayload = {
-  errors?: Array<{ field?: string; message?: string }>
-  detail?: { code?: string; message?: string }
-}
-
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000"
 const MONITOR_REQUEST_TIMEOUT_MS = 10_000
 const MONITOR_FIELDS = new Set<MonitorField>([
@@ -131,22 +128,18 @@ function normalizeField(field: string | undefined): MonitorField {
 }
 
 async function readValidationErrors(response: Response): Promise<MonitorError[]> {
-  try {
-    const payload = await response.json() as ErrorPayload
-    if (payload.errors?.length) {
-      return payload.errors.slice(0, 10).map((error) => ({
-        field: normalizeField(error.field),
-        message: error.message ?? "Enter a valid value.",
-      }))
-    }
-    if (payload.detail?.code === "unsafe_monitor_destination") {
-      return [{
-        field: "url",
-        message: payload.detail.message || "Monitor URL must resolve to a public destination.",
-      }]
-    }
-  } catch {
-    // Malformed responses receive a controlled fallback.
+  const error = await readApiError(response)
+  if (error?.fields.length) {
+    return error.fields.slice(0, 10).map((field) => ({
+      field: normalizeField(field.field),
+      message: field.message,
+    }))
+  }
+  if (error?.code === "unsafe_monitor_destination") {
+    return [{
+      field: "url",
+      message: error.message || "Monitor URL must resolve to a public destination.",
+    }]
   }
   return [{ field: "form", message: "Check the highlighted fields and try again." }]
 }

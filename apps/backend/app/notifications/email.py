@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from email.message import EmailMessage
 import hashlib
 import inspect
@@ -23,6 +23,7 @@ from app.notifications.retry import (
     retry_delay_seconds,
     schedule_notification_retry,
 )
+from app.utc import api_timestamp, as_utc, elapsed_seconds, utc_now
 
 
 logger = logging.getLogger(__name__)
@@ -73,7 +74,7 @@ def _safe_header_text(value: str) -> str:
 
 
 def _utc_text(value: datetime) -> str:
-    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    return api_timestamp(value)
 
 
 def _message_id(deduplication_key: str) -> str:
@@ -105,7 +106,7 @@ def build_opening_email(context: OpeningEmailContext, settings: Settings) -> Ema
 
 
 def _duration_text(opened_at: datetime, resolved_at: datetime) -> str:
-    total_seconds = max(0, int((resolved_at - opened_at).total_seconds()))
+    total_seconds = elapsed_seconds(opened_at, resolved_at)
     hours, remainder = divmod(total_seconds, 3600)
     minutes, seconds = divmod(remainder, 60)
     parts = []
@@ -236,8 +237,8 @@ async def deliver_notification(
     else:
         message = build_recovery_email(context, current_settings)
 
-    now = clock or (lambda: datetime.now(timezone.utc))
-    attempted_at = now()
+    now = clock or utc_now
+    attempted_at = as_utc(now())
     claim_result = await claim_notification_delivery(
         context.delivery_id,
         attempted_at=attempted_at,
@@ -257,7 +258,7 @@ async def deliver_notification(
             async with session.begin():
                 delivery = await session.get(NotificationDelivery, context.delivery_id)
                 if delivery is not None and delivery.status == "sending":
-                    failed_at = now()
+                    failed_at = as_utc(now())
                     if failure.temporary and delivery.attempt_count < MAX_EMAIL_ATTEMPTS:
                         retry_delay = retry_delay_seconds(delivery.attempt_count)
                         transition_delivery(
@@ -299,7 +300,7 @@ async def deliver_notification(
             return "retrying"
         return "failed"
 
-    delivered_at = now()
+    delivered_at = as_utc(now())
     async with session_factory() as session:
         async with session.begin():
             delivery = await session.scalar(

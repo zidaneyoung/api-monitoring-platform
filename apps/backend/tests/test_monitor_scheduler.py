@@ -2,6 +2,7 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 import logging
 import os
+import time
 from uuid import UUID
 
 import pytest
@@ -65,7 +66,14 @@ async def create_monitor(
         return monitor
 
 
-def test_scheduler_selects_due_monitors_and_queues_run_identifiers() -> None:
+@pytest.mark.parametrize("process_timezone", ["Pacific/Honolulu", "Pacific/Kiritimati"])
+def test_scheduler_selects_due_monitors_and_queues_run_identifiers(
+    process_timezone: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TZ", process_timezone)
+    time.tzset()
+
     async def scenario() -> None:
         engine, sessions = await create_session_factory()
         try:
@@ -136,7 +144,11 @@ def test_scheduler_selects_due_monitors_and_queues_run_identifiers() -> None:
         finally:
             await engine.dispose()
 
-    asyncio.run(scenario())
+    try:
+        asyncio.run(scenario())
+    finally:
+        monkeypatch.undo()
+        time.tzset()
 
 
 def test_queue_failure_leaves_run_for_a_later_scheduler_cycle() -> None:

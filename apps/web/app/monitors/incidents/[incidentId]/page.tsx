@@ -25,6 +25,7 @@ import {
   type IncidentDto,
   type IncidentOutcome,
 } from "@/lib/incident-api"
+import { formatMonitorTimestamp } from "@/lib/monitor-time"
 import { cn } from "@/lib/utils"
 
 type DetailState =
@@ -33,16 +34,9 @@ type DetailState =
   | { type: "not_found" }
   | { type: "error" }
 
-const timeFormatter = new Intl.DateTimeFormat("en-US", {
-  dateStyle: "medium",
-  timeStyle: "short",
-  timeZone: "UTC",
-})
-
 function formatTime(value: string | null) {
   if (!value) return "Not recorded"
-  const parsed = new Date(value)
-  return Number.isFinite(parsed.getTime()) ? timeFormatter.format(parsed) : "Unavailable"
+  return formatMonitorTimestamp(value).display
 }
 
 function toDetailState(outcome: IncidentOutcome<IncidentDto>): DetailState {
@@ -107,7 +101,7 @@ export default function IncidentDetailsPage() {
       <div className="flex flex-col gap-6">
         <Button className="w-fit" variant="ghost" nativeButton={false} render={<Link href="/monitors/incidents" />}><ArrowLeftIcon data-icon="inline-start" />Incident history</Button>
         <header className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start"><div><p className="text-sm text-muted-foreground">{incident.monitor.name}</p><h1 className="mt-1 capitalize">{incident.cause_category?.replaceAll("_", " ") ?? "Monitor incident"}</h1><p className="mt-2 max-w-2xl text-sm text-muted-foreground">{incident.cause_message ?? "Monitor state changed after consecutive checks."}</p></div><IncidentStatusBadge incident={incident} /></header>
-        <Card><CardHeader><CardTitle>Incident overview</CardTitle><CardDescription>All timestamps are shown in UTC.</CardDescription></CardHeader><CardContent className="grid gap-5 sm:grid-cols-3"><div><p className="flex items-center gap-2 text-xs text-muted-foreground"><CalendarDaysIcon className="size-3.5" />Opened</p><p className="mt-1 text-sm font-medium">{formatTime(incident.opened_at)}</p></div><div><p className="flex items-center gap-2 text-xs text-muted-foreground"><CalendarDaysIcon className="size-3.5" />{incident.resolved_at ? "Resolved" : "Resolution"}</p><p className="mt-1 text-sm font-medium">{formatTime(incident.resolved_at)}</p></div><div><p className="flex items-center gap-2 text-xs text-muted-foreground"><Clock3Icon className="size-3.5" />Duration</p><p className="mt-1 text-sm font-medium">{formatIncidentDuration(incident.duration_seconds)}</p></div></CardContent></Card>
+        <Card><CardHeader><CardTitle>Incident overview</CardTitle><CardDescription>Timestamps are shown in your local timezone.</CardDescription></CardHeader><CardContent className="grid gap-5 sm:grid-cols-3"><div><p className="flex items-center gap-2 text-xs text-muted-foreground"><CalendarDaysIcon className="size-3.5" />Opened</p><p className="mt-1 text-sm font-medium">{formatTime(incident.opened_at)}</p></div><div><p className="flex items-center gap-2 text-xs text-muted-foreground"><CalendarDaysIcon className="size-3.5" />{incident.resolved_at ? "Resolved" : "Resolution"}</p><p className="mt-1 text-sm font-medium">{formatTime(incident.resolved_at)}</p></div><div><p className="flex items-center gap-2 text-xs text-muted-foreground"><Clock3Icon className="size-3.5" />Duration</p><p className="mt-1 text-sm font-medium">{formatIncidentDuration(incident.duration_seconds)}</p></div></CardContent></Card>
         <div className="grid gap-4 lg:grid-cols-2"><CheckCard title="Triggering failure" check={incident.triggering_check} /><CheckCard title="Recovery check" check={incident.recovery_check} /></div>
         <Card><CardHeader><CardTitle>Incident timeline</CardTitle><CardDescription>Lifecycle events recorded for this incident.</CardDescription></CardHeader><CardContent>{incident.events.length === 0 ? <p className="text-sm text-muted-foreground">No timeline events were recorded.</p> : <Table><TableHeader><TableRow><TableHead>When</TableHead><TableHead>Event</TableHead><TableHead>Details</TableHead></TableRow></TableHeader><TableBody>{incident.events.map((event) => <TableRow key={event.id}><TableCell className="whitespace-nowrap text-sm">{formatTime(event.occurred_at)}</TableCell><TableCell className="capitalize"><span className="inline-flex items-center gap-2"><CheckCircle2Icon className={cn("size-4", event.event_type === "resolved" && !open ? "text-status-up" : "text-status-down")} />{event.event_type.replaceAll("_", " ")}</span></TableCell><TableCell className="text-muted-foreground">{event.message ?? "No additional details."}</TableCell></TableRow>)}</TableBody></Table>}</CardContent></Card>
       </div>
