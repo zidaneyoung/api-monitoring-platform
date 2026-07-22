@@ -1,0 +1,147 @@
+name: api-monitoring-e2e-tests
+
+x-backend-environment: &backend-environment
+  ENVIRONMENT: test
+  DEBUG: "false"
+  FRONTEND_ORIGIN: http://127.0.0.1:3300
+  SECRET_KEY: e2e-only-secret
+  AUTH_RATE_LIMIT_KEY_SECRET: e2e-only-rate-limit-secret
+  AUTH_ALLOW_MISSING_ORIGIN: "false"
+  AUTH_LOGIN_RATE_LIMIT_ATTEMPTS: "100"
+  AUTH_REGISTRATION_RATE_LIMIT_ATTEMPTS: "100"
+  SESSION_COOKIE_NAME: amp_e2e_session
+  DATABASE_URL: postgresql+asyncpg://e2e_test:e2e-only@db:5432/api_monitoring_e2e
+  REDIS_URL: redis://redis:6379/13
+  CELERY_BROKER_URL: redis://redis:6379/13
+  CELERY_RESULT_BACKEND: redis://redis:6379/13
+  SCHEDULER_DISPATCH_INTERVAL_SECONDS: "1"
+  EMAIL_HOST: mail.invalid
+  EMAIL_PORT: "1025"
+  EMAIL_FROM: no-reply@e2e.test
+  EMAIL_USE_TLS: "false"
+
+services:
+  db:
+    image: postgres:16.4-alpine
+    restart: "no"
+    environment:
+      POSTGRES_DB: api_monitoring_e2e
+      POSTGRES_USER: e2e_test
+      POSTGRES_PASSWORD: e2e-only
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U e2e_test -d api_monitoring_e2e]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+      start_period: 3s
+    tmpfs:
+      - /var/lib/postgresql/data
+    networks: [e2e]
+
+  redis:
+    image: redis:7.4-alpine
+    restart: "no"
+    healthcheck:
+      test: [CMD, redis-cli, -n, "13", ping]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+      start_period: 2s
+    networks: [e2e]
+
+  target:
+    build:
+      context: ./apps/backend
+      dockerfile: Dockerfile
+    restart: "no"
+    command: [python, -m, scripts.e2e_target]
+    ports:
+      - 127.0.0.1:8801:8080
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=2).read()"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+      start_period: 2s
+    networks:
+      e2e:
+        ipv4_address: 93.184.216.34
+      control:
+
+  migrate:
+    build:
+      context: ./apps/backend
+      dockerfile: Dockerfile
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment: *backend-environment
+    command: [alembic, upgrade, head]
+    networks: [e2e]
+
+  backend:
+    build:
+      context: ./apps/backend
+      dockerfile: Dockerfile
+    restart: "no"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      target:
+        condition: service_healthy
+    environment:
+      <<: *backend-environment
+      LOG_SERVICE: e2e-backend
+    command: [uvicorn, app.main:app, --host, 0.0.0.0, --port, "8000", --log-level, warning, --no-access-log]
+    ports:
+      - 127.0.0.1:8800:8000
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=2).read()"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 3s
+    networks: [e2e, control]
+
+  worker:
+    build:
+      context: ./apps/backend
+      dockerfile: Dockerfile
+    restart: "no"
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      <<: *backend-environment
+      LOG_SERVICE: e2e-worker
+    command: [celery, -A, app.celery_app:celery_app, worker, --loglevel=warning, --concurrency=1]
+    networks: [e2e]
+
+  scheduler:
+    build:
+      context: ./apps/backend
+      dockerfile: Dockerfile
+    restart: "no"
+    depends_on:
+      backend:
+        condition: service_healthy
+      worker:
+        condition: service_started
+    environment:
+      <<: *backend-environment
+      LOG_SERVICE: e2e-scheduler
+    command: [celery, -A, app.celery_app:celery_app, beat, --loglevel=warning, --schedule, /tmp/celerybeat-schedule]
+    tmpfs:
+      - /tmp
+    networks: [e2e]
+
+networks:
+  e2e:
+    internal: true
+    ipam:
+      config:
+        - subnet: 93.184.216.0/24
+  control:

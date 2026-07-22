@@ -90,3 +90,63 @@ run per schedule, one check and counter update per run, one active incident, one
 opening and recovery event/delivery, and one SMTP call. Recovery tests include
 interrupted sequences; email tests cancel an in-flight SMTP attempt and verify its
 durable `sending` claim prevents an unsafe automatic resend.
+
+## Browser end-to-end MVP tests
+
+Requirements:
+
+- Windows PowerShell, Docker Engine or Docker Desktop with Docker Compose v2.
+- Node.js dependencies installed with `npm ci` in `apps/web`.
+- Playwright Chromium installed once with `npx playwright install chromium` in `apps/web`.
+- Host ports 3300, 8800, and 8801 available.
+- No development or production credentials, services, or data.
+
+Run the full browser suite from the repository root:
+
+```powershell
+./scripts/run-e2e-tests.ps1
+```
+
+For a visible browser, use:
+
+```powershell
+./scripts/run-e2e-tests.ps1 -Headed
+```
+
+To isolate a named case while debugging, pass a Playwright title pattern:
+
+```powershell
+./scripts/run-e2e-tests.ps1 -Grep "complete MVP journey"
+```
+
+The runner creates the dedicated `api-monitoring-e2e-tests` Compose project with
+disposable PostgreSQL 16, Redis 7 database 13, migrated backend, worker, scheduler,
+and a controlled HTTP target. It applies every Alembic migration before starting
+the application processes, then launches the Next.js frontend on
+`http://127.0.0.1:3300`. The target is reachable by the isolated worker at
+`http://93.184.216.34:8080/health`; the tests switch it between healthy and failing
+responses through a host-only control port. The worker and scheduler have no
+external network route.
+
+Playwright exercises registration, invalid and valid login, monitor creation,
+scheduled healthy and failing checks, threshold-based incident opening and
+recovery, dashboard/detail/history rendering, response-time history, account
+isolation, logout protection, validation, empty states, SSRF rejection, and
+controlled API failures. It uses generated accounts and the disposable database;
+it never contacts production services or external endpoints.
+
+Failure screenshots, video, traces, and error context are written under
+`apps/web/test-results`. Successful runs remove prior artifacts. Frontend stdout
+and stderr are retained in the system temporary directory only when a run fails;
+the thrown readiness error prints their paths. In every exit path, the script
+stops the dedicated frontend process, restores Next-generated tracked config
+files, and removes the Compose containers, networks, and volumes.
+
+Common failures:
+
+- `port is already allocated`: stop the local process using 3300, 8800, or 8801.
+- Browser executable missing: run `npx playwright install chromium` in `apps/web`.
+- Docker readiness timeout: confirm Docker Desktop is running, then inspect the
+  Compose output and retained frontend logs.
+- Browser assertion failure: inspect `apps/web/test-results/.../error-context.md`
+  and open the retained trace with `npx playwright show-trace <trace.zip>`.
