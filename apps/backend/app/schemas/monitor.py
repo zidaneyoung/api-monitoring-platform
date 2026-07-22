@@ -3,9 +3,10 @@ from math import ceil
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
+from pydantic import Field, ValidationInfo, field_validator
 
 from app.schemas.request import StrictRequestModel
+from app.schemas.response import UTCResponseModel
 from app.security.monitor_urls import MAX_MONITOR_URL_LENGTH, normalize_monitor_url
 
 
@@ -43,9 +44,7 @@ class MonitorUpdate(MonitorCreate):
     """A complete monitor configuration update using creation validation."""
 
 
-class MonitorResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
+class MonitorResponse(UTCResponseModel):
     id: UUID
     name: str
     url: str
@@ -65,7 +64,7 @@ class MonitorResponse(BaseModel):
     latest_tls_expires_at: datetime | None
 
 
-class MonitorListResponse(BaseModel):
+class MonitorListResponse(UTCResponseModel):
     items: list[MonitorResponse]
     page: int
     page_size: int
@@ -90,7 +89,7 @@ class MonitorListResponse(BaseModel):
         )
 
 
-class MonitorSummaryResponse(BaseModel):
+class MonitorSummaryResponse(UTCResponseModel):
     """Counts for every persisted monitor; total equals all four state counts."""
 
     total: int = Field(ge=0)
@@ -100,9 +99,7 @@ class MonitorSummaryResponse(BaseModel):
     unknown: int = Field(ge=0)
 
 
-class MonitorCheckResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
+class MonitorCheckResponse(UTCResponseModel):
     id: UUID
     success: bool
     completed_at: datetime
@@ -111,7 +108,7 @@ class MonitorCheckResponse(BaseModel):
     error_category: str | None
 
 
-class MonitorCheckListResponse(BaseModel):
+class MonitorCheckListResponse(UTCResponseModel):
     items: list[MonitorCheckResponse]
     page: int
     page_size: int
@@ -136,15 +133,13 @@ class MonitorCheckListResponse(BaseModel):
         )
 
 
-class MonitorResponseTimePoint(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
+class MonitorResponseTimePoint(UTCResponseModel):
     completed_at: datetime
     response_time_ms: int | None
     success: bool
 
 
-class MonitorResponseTimeSeriesResponse(BaseModel):
+class MonitorResponseTimeSeriesResponse(UTCResponseModel):
     range: Literal["24h"]
     started_at: datetime
     ended_at: datetime

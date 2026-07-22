@@ -5,6 +5,7 @@ from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models import NotificationDelivery
+from app.utc import as_utc
 
 
 async def claim_notification_delivery(
@@ -14,6 +15,8 @@ async def claim_notification_delivery(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> str:
     """Atomically move one due delivery to sending using PostgreSQL state."""
+
+    attempted_at = as_utc(attempted_at)
 
     async with session_factory() as session:
         async with session.begin():

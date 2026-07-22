@@ -1,7 +1,9 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, field_validator
+
+from app.schemas.response import UTCResponseModel
 
 
 class UserCreate(BaseModel):
@@ -25,9 +27,7 @@ class UserCreate(BaseModel):
         return value
 
 
-class UserRead(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
+class UserRead(UTCResponseModel):
     id: UUID
     email: str
     is_active: bool

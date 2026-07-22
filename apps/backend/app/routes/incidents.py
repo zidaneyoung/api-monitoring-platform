@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
@@ -19,6 +19,7 @@ from app.schemas.incident import (
     IncidentMonitorResponse,
     IncidentResponse,
 )
+from app.utc import utc_now
 
 
 router = APIRouter(prefix="/incidents", tags=["incidents"])
@@ -120,7 +121,7 @@ async def list_incidents(
         .offset((page - 1) * page_size)
         .limit(page_size)
     )
-    now = datetime.now(timezone.utc)
+    now = utc_now()
     return IncidentListResponse.from_items(
         items=[_list_item(incident, now) for incident in result.scalars()],
         page=page,
@@ -160,7 +161,7 @@ async def get_incident(
     if incident is None:
         raise _incident_not_found_error()
 
-    now = datetime.now(timezone.utc)
+    now = utc_now()
     item = _list_item(incident, now)
     return IncidentResponse(
         **item.model_dump(),

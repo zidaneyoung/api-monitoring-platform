@@ -2,6 +2,7 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 import os
 import smtplib
+import time
 
 import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -64,7 +65,14 @@ def test_retry_backoff_increases_and_is_bounded() -> None:
     assert retry_delay_seconds(20) == 3600
 
 
-def test_temporary_failure_retries_same_record_then_succeeds() -> None:
+@pytest.mark.parametrize("process_timezone", ["Pacific/Honolulu", "Pacific/Kiritimati"])
+def test_temporary_failure_retries_same_record_then_succeeds(
+    process_timezone: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TZ", process_timezone)
+    time.tzset()
+
     async def scenario() -> None:
         database_url = os.getenv("TEST_DATABASE_URL")
         if database_url is None:
@@ -131,7 +139,11 @@ def test_temporary_failure_retries_same_record_then_succeeds() -> None:
         finally:
             await engine.dispose()
 
-    asyncio.run(scenario())
+    try:
+        asyncio.run(scenario())
+    finally:
+        monkeypatch.undo()
+        time.tzset()
 
 
 def test_permanent_failure_stops_without_retry() -> None:

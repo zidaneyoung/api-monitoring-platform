@@ -35,6 +35,7 @@ def create_database_engine(database_url: str) -> AsyncEngine:
     return create_async_engine(
         async_postgres_url(database_url),
         pool_pre_ping=True,
+        connect_args={"server_settings": {"timezone": "UTC"}},
     )
 
 

@@ -3,14 +3,22 @@ export type MonitorTimestamp =
   | { kind: "invalid"; display: string; original: string }
   | { kind: "valid"; display: string; original: string }
 
+const explicitTimeZone = /(?:Z|[+-]\d{2}:\d{2})$/i
+
+export function parseApiTimestamp(value: string): number | null {
+  if (!explicitTimeZone.test(value)) return null
+  const timestamp = Date.parse(value)
+  return Number.isFinite(timestamp) ? timestamp : null
+}
+
 export function formatMonitorTimestamp(
   value: string | null,
   options: { locale?: string | string[]; timeZone?: string } = {},
 ): MonitorTimestamp {
   if (value === null) return { kind: "missing", display: "—", original: null }
 
-  const parsed = new Date(value)
-  if (!Number.isFinite(parsed.getTime())) {
+  const timestamp = parseApiTimestamp(value)
+  if (timestamp === null) {
     return { kind: "invalid", display: "Unavailable", original: value }
   }
 
@@ -20,7 +28,7 @@ export function formatMonitorTimestamp(
       timeStyle: "short",
       timeZone: options.timeZone,
     })
-    return { kind: "valid", display: formatter.format(parsed), original: value }
+    return { kind: "valid", display: formatter.format(timestamp), original: value }
   } catch {
     return { kind: "invalid", display: "Unavailable", original: value }
   }

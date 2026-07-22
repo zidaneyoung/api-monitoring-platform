@@ -28,6 +28,7 @@ import {
   type IncidentOutcome,
   type IncidentSection,
 } from "@/lib/incident-api"
+import { formatMonitorTimestamp } from "@/lib/monitor-time"
 import { cn } from "@/lib/utils"
 
 type StatusFilter = "all" | IncidentSection
@@ -37,15 +38,8 @@ type LoadState =
   | { type: "error"; outcome: Exclude<IncidentOutcome<never>, { type: "success" }> }
 
 const pageSizes = [10, 25, 50]
-const timeFormatter = new Intl.DateTimeFormat("en-US", {
-  dateStyle: "medium",
-  timeStyle: "short",
-  timeZone: "UTC",
-})
-
 function formatTime(value: string) {
-  const parsed = new Date(value)
-  return Number.isFinite(parsed.getTime()) ? timeFormatter.format(parsed) : "Unavailable"
+  return formatMonitorTimestamp(value).display
 }
 
 function loadState(outcome: IncidentOutcome<IncidentListDto>): LoadState {

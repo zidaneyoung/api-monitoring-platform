@@ -1,13 +1,12 @@
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from pydantic import EmailStr, Field, field_validator
 
 from app.schemas.request import StrictRequestModel
+from app.schemas.response import UTCResponseModel
 
 
-class PublicUser(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
+class PublicUser(UTCResponseModel):
     id: UUID
     email: str
 

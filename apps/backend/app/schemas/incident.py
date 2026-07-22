@@ -3,10 +3,10 @@ from math import ceil
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel
+from app.schemas.response import UTCResponseModel
 
 
-class IncidentCheckResponse(BaseModel):
+class IncidentCheckResponse(UTCResponseModel):
     id: UUID
     started_at: datetime
     completed_at: datetime
@@ -17,7 +17,7 @@ class IncidentCheckResponse(BaseModel):
     error_message: str | None
 
 
-class IncidentEventResponse(BaseModel):
+class IncidentEventResponse(UTCResponseModel):
     id: UUID
     sequence_number: int
     event_type: str
@@ -25,7 +25,7 @@ class IncidentEventResponse(BaseModel):
     message: str | None
 
 
-class IncidentListItemResponse(BaseModel):
+class IncidentListItemResponse(UTCResponseModel):
     id: UUID
     monitor_id: UUID
     monitor_name: str
@@ -37,7 +37,7 @@ class IncidentListItemResponse(BaseModel):
     cause_message: str | None
 
 
-class IncidentListResponse(BaseModel):
+class IncidentListResponse(UTCResponseModel):
     items: list[IncidentListItemResponse]
     page: int
     page_size: int
@@ -62,7 +62,7 @@ class IncidentListResponse(BaseModel):
         )
 
 
-class IncidentMonitorResponse(BaseModel):
+class IncidentMonitorResponse(UTCResponseModel):
     id: UUID
     name: str
 
