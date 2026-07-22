@@ -134,6 +134,56 @@ def test_ambiguous_sending_record_is_not_automatically_resent() -> None:
     asyncio.run(scenario())
 
 
+def test_interrupted_smtp_attempt_is_not_automatically_resent() -> None:
+    async def scenario() -> None:
+        engine = create_database_engine(database_url())
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        sender_started = asyncio.Event()
+        sender_calls = 0
+
+        async def interrupted_sender(_message, _settings) -> str:
+            sender_started.set()
+            await asyncio.Event().wait()
+            return "unreachable"
+
+        def repeated_sender(_message, _settings) -> str:
+            nonlocal sender_calls
+            sender_calls += 1
+            return "unexpected"
+
+        try:
+            delivery = await create_opening_delivery(sessions)
+            attempt = asyncio.create_task(
+                deliver_notification(
+                    delivery.id,
+                    session_factory=sessions,
+                    sender=interrupted_sender,
+                )
+            )
+            await asyncio.wait_for(sender_started.wait(), timeout=5)
+            attempt.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await attempt
+
+            repeated = await deliver_notification(
+                delivery.id,
+                session_factory=sessions,
+                sender=repeated_sender,
+            )
+            async with sessions() as session:
+                persisted = await session.get(NotificationDelivery, delivery.id)
+
+            assert repeated == "already_claimed"
+            assert sender_calls == 0
+            assert persisted is not None and persisted.status == "sending"
+            assert persisted.attempt_count == 1
+            assert persisted.last_attempt_at is not None
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
 def test_email_task_uses_late_ack_and_worker_loss_redelivery() -> None:
     task = celery_app.tasks[EMAIL_DELIVERY_TASK]
     assert task.acks_late is True

@@ -229,7 +229,7 @@ def test_complete_authentication_lifecycle_and_current_user_isolation(
         assert nonexistent_user.status_code == 401
         assert disabled_user.status_code == 401
         assert wrong_password.json() == nonexistent_user.json() == disabled_user.json()
-        assert wrong_password.json()["detail"]["code"] == "invalid_credentials"
+        assert wrong_password.json()["error"]["code"] == "invalid_credentials"
 
         assert alpha_login.status_code == 200
         assert beta_login.status_code == 200
