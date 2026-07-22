@@ -5,10 +5,11 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
 
+from app.schemas.request import StrictRequestModel
 from app.security.monitor_urls import MAX_MONITOR_URL_LENGTH, normalize_monitor_url
 
 
-class MonitorCreate(BaseModel):
+class MonitorCreate(StrictRequestModel):
     name: str = Field(min_length=1, max_length=200)
     url: str = Field(min_length=1, max_length=MAX_MONITOR_URL_LENGTH)
     http_method: Literal["GET", "HEAD"] = "GET"
