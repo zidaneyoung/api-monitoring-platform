@@ -74,3 +74,19 @@ Redis database 0, and confirms test URLs differ from application URLs. Scheduler
 and worker functions use the real migrated PostgreSQL database; authentication and
 rate-limit tests use the real isolated Redis service; notification templates use
 local Mailpit. No production service or real recipient is contacted.
+
+## Duplicate-processing and concurrency tests
+
+Run the scheduler, worker, incident, and email idempotency suite in the same
+isolated services:
+
+```powershell
+./scripts/run-concurrency-tests.ps1
+```
+
+The bounded concurrency cases repeat scheduler dispatch, monitor execution,
+incident opening, notification claiming, and SMTP delivery races. They assert one
+run per schedule, one check and counter update per run, one active incident, one
+opening and recovery event/delivery, and one SMTP call. Recovery tests include
+interrupted sequences; email tests cancel an in-flight SMTP attempt and verify its
+durable `sending` claim prevents an unsafe automatic resend.

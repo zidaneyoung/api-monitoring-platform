@@ -67,6 +67,7 @@ services:
       TEST_SMTP_HOST: mailpit
       TEST_SMTP_PORT: "1025"
       TEST_MAILPIT_API_URL: http://mailpit:8025
+      PYTEST_ARGS: ${PYTEST_ARGS:-}
       EMAIL_HOST: mailpit
       EMAIL_PORT: "1025"
       EMAIL_FROM: no-reply@integration.test
@@ -77,4 +78,4 @@ services:
       - >-
         DATABASE_URL="$$TEST_DATABASE_URL" alembic upgrade head &&
         python -m scripts.prepare_integration_tests &&
-        python -m pytest -q
+        python -m pytest -q $${PYTEST_ARGS:-}
