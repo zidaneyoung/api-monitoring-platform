@@ -1,6 +1,7 @@
 # Node.js dependencies and build output
 node_modules/
 .next/
+.next-e2e/
 dist/
 build/
 
@@ -31,6 +32,8 @@ htmlcov/
 .turbo/
 .parcel-cache/
 graphify-out/
+apps/web/test-results/
+apps/web/playwright-report/
 
 # IDE and operating system files
 .vscode/
