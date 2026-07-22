@@ -234,7 +234,16 @@ def test_provider_failure_stays_controlled_and_preserves_incident(
             assert persisted.provider_error_code == "smtp_permanent"
             assert persisted.provider_error_message == "SMTP provider rejected delivery permanently."
             assert incident is not None and incident.status == "open"
-            assert "email_delivery_provider_failure" in caplog.messages
+            assert "email_delivery_permanent_failure" in caplog.messages
+            failure_log = next(
+                record
+                for record in caplog.records
+                if getattr(record, "event", None)
+                == "email_delivery_permanent_failure"
+            )
+            assert failure_log.notification_delivery_id == str(delivery.id)
+            assert failure_log.safe_error_category == "smtp_permanent"
+            assert failure_log.attempt_number == 1
             assert "smtp-password" not in caplog.text
             assert "secret-provider-detail" not in caplog.text
         finally:

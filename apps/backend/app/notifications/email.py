@@ -23,6 +23,7 @@ from app.notifications.retry import (
     retry_delay_seconds,
     schedule_notification_retry,
 )
+from app.structured_logging import log_event
 from app.utc import api_timestamp, as_utc, elapsed_seconds, utc_now
 
 
@@ -221,7 +222,7 @@ async def deliver_notification(
     try:
         parsed_delivery_id = UUID(str(delivery_id))
     except ValueError:
-        logger.warning("email_delivery_invalid_identifier")
+        log_event(logger, logging.WARNING, "email_delivery_invalid_identifier")
         return "missing"
 
     context = await _load_email_context(
@@ -254,10 +255,12 @@ async def deliver_notification(
     except (OSError, smtplib.SMTPException) as error:
         failure = classify_provider_failure(error)
         retry_delay: int | None = None
+        attempt_count: int | None = None
         async with session_factory() as session:
             async with session.begin():
                 delivery = await session.get(NotificationDelivery, context.delivery_id)
                 if delivery is not None and delivery.status == "sending":
+                    attempt_count = delivery.attempt_count
                     failed_at = as_utc(now())
                     if failure.temporary and delivery.attempt_count < MAX_EMAIL_ATTEMPTS:
                         retry_delay = retry_delay_seconds(delivery.attempt_count)
@@ -285,17 +288,33 @@ async def deliver_notification(
                                 else failure.safe_message
                             ),
                         )
-        logger.warning(
-            "email_delivery_provider_failure",
-            extra={"delivery_id": str(context.delivery_id)},
+        event = (
+            "email_delivery_temporary_failure"
+            if retry_delay is not None
+            else "email_delivery_permanent_failure"
+        )
+        log_event(
+            logger,
+            logging.WARNING,
+            event,
+            notification_delivery_id=str(context.delivery_id),
+            safe_error_category=(
+                failure.error_code
+                if retry_delay is not None or not failure.temporary
+                else "attempts_exhausted"
+            ),
+            attempt_number=attempt_count,
+            retry_delay_seconds=retry_delay,
         )
         if retry_delay is not None:
             try:
                 await retry_scheduler(context.delivery_id, retry_delay)
             except Exception:
-                logger.warning(
+                log_event(
+                    logger,
+                    logging.WARNING,
                     "email_retry_enqueue_failed",
-                    extra={"delivery_id": str(context.delivery_id)},
+                    notification_delivery_id=str(context.delivery_id),
                 )
             return "retrying"
         return "failed"
@@ -318,4 +337,10 @@ async def deliver_notification(
                 occurred_at=delivered_at,
                 provider_message_id=provider_message_id,
             )
+    log_event(
+        logger,
+        logging.INFO,
+        "email_delivery_succeeded",
+        notification_delivery_id=str(context.delivery_id),
+    )
     return "delivered"

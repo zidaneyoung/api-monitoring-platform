@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.testclient import TestClient
@@ -125,7 +127,11 @@ def test_mapped_http_error_categories_share_one_contract(
 
 
 @pytest.mark.parametrize("path", ["/unsafe-detail", "/internal"])
-def test_internal_failures_hide_exception_and_environment_details(path: str) -> None:
+def test_internal_failures_hide_exception_and_environment_details(
+    path: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.ERROR, logger="app.api_errors")
     with TestClient(error_test_app(), raise_server_exceptions=False) as client:
         response = client.get(path)
 
@@ -140,3 +146,10 @@ def test_internal_failures_hide_exception_and_environment_details(path: str) -> 
         "Traceback",
     ):
         assert secret not in response.text
+    if path == "/internal":
+        failure_log = next(
+            record
+            for record in caplog.records
+            if getattr(record, "event", None) == "api_unexpected_failure"
+        )
+        assert failure_log.safe_error_category == "internal"

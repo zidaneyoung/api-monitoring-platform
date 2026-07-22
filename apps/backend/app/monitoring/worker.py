@@ -34,6 +34,7 @@ from app.security.monitor_destinations import (
     validate_before_connection,
     validate_redirect_destination,
 )
+from app.structured_logging import log_event
 from app.utc import utc_now
 
 
@@ -109,7 +110,7 @@ async def _add_incident_opening(
     check: MonitorCheck,
     owner_email: str,
     occurred_at: datetime,
-) -> UUID | None:
+) -> tuple[UUID, UUID] | None:
     active_incident_id = await session.scalar(
         select(Incident.id).where(
             Incident.monitor_id == monitor.id,
@@ -160,7 +161,7 @@ async def _add_incident_opening(
             ),
         ]
     )
-    return delivery_id
+    return delivery_id, incident_id
 
 
 async def _add_incident_resolution(
@@ -170,7 +171,7 @@ async def _add_incident_resolution(
     check: MonitorCheck,
     owner_email: str,
     occurred_at: datetime,
-) -> UUID | None:
+) -> tuple[UUID, UUID] | None:
     incident = await session.scalar(
         select(Incident)
         .where(
@@ -221,7 +222,7 @@ async def _add_incident_resolution(
             ),
         ]
     )
-    return delivery_id
+    return delivery_id, incident.id
 
 
 def create_http_client(timeout_seconds: float) -> httpx.AsyncClient:
@@ -297,13 +298,20 @@ async def _expire_run(
                     return MonitorExecutionResult("skipped", False)
                 run.status = "expired"
                 run.completed_at = utc_now()
-                logger.info(
+                log_event(
+                    logger,
+                    logging.INFO,
                     "monitor_worker_run_expired",
-                    extra={"monitor_run_id": str(run.id)},
+                    monitor_run_id=str(run.id),
                 )
                 return MonitorExecutionResult("expired", False)
     except SQLAlchemyError:
-        logger.warning("monitor_worker_database_failure")
+        log_event(
+            logger,
+            logging.WARNING,
+            "monitor_worker_database_failure",
+            monitor_run_id=str(run_id),
+        )
         return MonitorExecutionResult("failed", False)
 
 
@@ -338,7 +346,12 @@ async def _claim_run(
                 run.attempt_count += 1
                 return None
     except SQLAlchemyError:
-        logger.warning("monitor_worker_database_failure")
+        log_event(
+            logger,
+            logging.WARNING,
+            "monitor_worker_database_failure",
+            monitor_run_id=str(run_id),
+        )
         return MonitorExecutionResult("failed", False)
 
 
@@ -372,7 +385,12 @@ async def _load_active_request(
                     expected_status_max=monitor.expected_status_max,
                 )
     except SQLAlchemyError:
-        logger.warning("monitor_worker_database_failure")
+        log_event(
+            logger,
+            logging.WARNING,
+            "monitor_worker_database_failure",
+            monitor_run_id=str(run_id),
+        )
         return MonitorExecutionResult("failed", False)
 
 
@@ -453,6 +471,10 @@ async def _complete_run(
 ) -> MonitorExecutionResult:
     completed_at = utc_now()
     delivery_id: UUID | None = None
+    incident_id: UUID | None = None
+    incident_event: str | None = None
+    monitor_id: UUID | None = None
+    check_id = uuid4()
     try:
         async with session_factory() as session:
             async with session.begin():
@@ -472,6 +494,7 @@ async def _complete_run(
                 )
                 if monitor is None:
                     return MonitorExecutionResult("missing", False)
+                monitor_id = monitor.id
                 existing_check = await session.scalar(
                     select(MonitorCheck.id).where(MonitorCheck.run_id == run.id)
                 )
@@ -479,6 +502,7 @@ async def _complete_run(
                     return MonitorExecutionResult("skipped", False)
 
                 check = MonitorCheck(
+                    id=check_id,
                     monitor_id=monitor.id,
                     run_id=run.id,
                     started_at=started_at,
@@ -503,38 +527,98 @@ async def _complete_run(
                     )
                     if owner_email is None:
                         raise SQLAlchemyError("monitor owner is missing")
-                    delivery_id = await _add_incident_opening(
+                    incident_result = await _add_incident_opening(
                         session,
                         monitor=monitor,
                         check=check,
                         owner_email=owner_email,
                         occurred_at=completed_at,
                     )
+                    if incident_result is not None:
+                        delivery_id, incident_id = incident_result
+                        incident_event = "incident_opened"
                 elif transition == "incident_recovery_ready":
                     owner_email = await session.scalar(
                         select(User.email).where(User.id == monitor.user_id)
                     )
                     if owner_email is None:
                         raise SQLAlchemyError("monitor owner is missing")
-                    delivery_id = await _add_incident_resolution(
+                    incident_result = await _add_incident_resolution(
                         session,
                         monitor=monitor,
                         check=check,
                         owner_email=owner_email,
                         occurred_at=completed_at,
                     )
+                    if incident_result is not None:
+                        delivery_id, incident_id = incident_result
+                        incident_event = "incident_resolved"
                 run.status = "completed"
                 run.completed_at = completed_at
                 result = MonitorExecutionResult("completed", True)
     except SQLAlchemyError:
-        logger.warning("monitor_worker_database_failure")
+        log_event(
+            logger,
+            logging.WARNING,
+            "monitor_worker_database_failure",
+            monitor_run_id=str(run_id),
+        )
         return MonitorExecutionResult("failed", False)
 
+    if incident_event is not None and incident_id is not None and delivery_id is not None:
+        log_event(
+            logger,
+            logging.INFO,
+            incident_event,
+            monitor_id=str(monitor_id),
+            monitor_run_id=str(run_id),
+            monitor_check_id=str(check_id),
+            incident_id=str(incident_id),
+        )
+        log_event(
+            logger,
+            logging.INFO,
+            "notification_event_created",
+            incident_id=str(incident_id),
+            notification_delivery_id=str(delivery_id),
+        )
     if delivery_id is not None:
         try:
             await notification_enqueuer(delivery_id)
         except Exception:
-            logger.warning("notification_delivery_enqueue_failed")
+            log_event(
+                logger,
+                logging.WARNING,
+                "notification_delivery_enqueue_failed",
+                notification_delivery_id=str(delivery_id),
+                incident_id=str(incident_id) if incident_id is not None else None,
+            )
+        else:
+            log_event(
+                logger,
+                logging.INFO,
+                "notification_delivery_queued",
+                notification_delivery_id=str(delivery_id),
+                incident_id=str(incident_id) if incident_id is not None else None,
+            )
+    return result
+
+
+def _worker_completion(
+    run_id: UUID,
+    result: MonitorExecutionResult,
+    *,
+    monitor_id: UUID | None = None,
+) -> MonitorExecutionResult:
+    log_event(
+        logger,
+        logging.INFO,
+        "monitor_worker_completed",
+        monitor_run_id=str(run_id),
+        monitor_id=str(monitor_id) if monitor_id is not None else None,
+        outcome=result.status,
+        check_created=result.check_created,
+    )
     return result
 
 
@@ -553,19 +637,26 @@ async def execute_monitor_run(
     try:
         parsed_run_id = UUID(str(run_id))
     except ValueError:
-        logger.warning("monitor_worker_invalid_run_identifier")
+        log_event(logger, logging.WARNING, "monitor_worker_invalid_run_identifier")
         return MonitorExecutionResult("missing", False)
+
+    log_event(
+        logger,
+        logging.INFO,
+        "monitor_worker_started",
+        monitor_run_id=str(parsed_run_id),
+    )
 
     claim_result = await _claim_run(parsed_run_id, session_factory=session_factory)
     if claim_result is not None:
-        return claim_result
+        return _worker_completion(parsed_run_id, claim_result)
 
     request_or_result = await _load_active_request(
         parsed_run_id,
         session_factory=session_factory,
     )
     if isinstance(request_or_result, MonitorExecutionResult):
-        return request_or_result
+        return _worker_completion(parsed_run_id, request_or_result)
 
     started_at = utc_now()
     response_time_ms: int | None = None
@@ -591,17 +682,38 @@ async def execute_monitor_run(
             <= request_or_result.expected_status_max
         )
     except DestinationSecurityError:
-        logger.warning("monitor_worker_destination_rejected")
+        log_event(
+            logger,
+            logging.WARNING,
+            "monitor_worker_destination_rejected",
+            monitor_run_id=str(parsed_run_id),
+            monitor_id=str(request_or_result.monitor_id),
+            safe_error_category="unsafe_destination",
+        )
         error_category, error_message = normalize_monitor_error(
             DestinationSecurityError()
         )
     except RequestAttemptError as error:
         response_time_ms = error.response_time_ms
         error_category, error_message = normalize_monitor_error(error.cause)
-        logger.warning("monitor_worker_request_failed", extra={"category": error_category})
+        log_event(
+            logger,
+            logging.WARNING,
+            "monitor_worker_request_failed",
+            monitor_run_id=str(parsed_run_id),
+            monitor_id=str(request_or_result.monitor_id),
+            safe_error_category=error_category,
+        )
     except Exception as error:
         error_category, error_message = normalize_monitor_error(error)
-        logger.warning("monitor_worker_request_failed", extra={"category": error_category})
+        log_event(
+            logger,
+            logging.WARNING,
+            "monitor_worker_request_failed",
+            monitor_run_id=str(parsed_run_id),
+            monitor_id=str(request_or_result.monitor_id),
+            safe_error_category=error_category,
+        )
     else:
         if success:
             error_category = None
@@ -610,7 +722,17 @@ async def execute_monitor_run(
             error_category = "unexpected_status"
             error_message = "HTTP status is outside the accepted range."
 
-    return await _complete_run(
+    if not success:
+        log_event(
+            logger,
+            logging.WARNING,
+            "monitor_check_failed",
+            monitor_run_id=str(parsed_run_id),
+            monitor_id=str(request_or_result.monitor_id),
+            safe_error_category=error_category,
+        )
+
+    result = await _complete_run(
         parsed_run_id,
         started_at=started_at,
         response_time_ms=response_time_ms,
@@ -623,4 +745,9 @@ async def execute_monitor_run(
         notification_enqueuer=(
             notification_enqueuer or enqueue_notification_delivery
         ),
+    )
+    return _worker_completion(
+        parsed_run_id,
+        result,
+        monitor_id=request_or_result.monitor_id,
     )

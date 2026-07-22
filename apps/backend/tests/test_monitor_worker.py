@@ -735,11 +735,13 @@ def test_failed_counter_update_rolls_back_check_and_monitor_changes(
 def test_failure_threshold_opens_incident_with_safe_related_events(
     failure_threshold: int,
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     async def scenario() -> None:
         engine, sessions = await create_session_factory()
         try:
             await reset_database(sessions)
+            caplog.set_level(logging.INFO, logger="app.monitoring.worker")
             monitor, first_run = await create_monitor_run(
                 sessions,
                 email=f"threshold-{failure_threshold}@example.com",
@@ -835,6 +837,27 @@ def test_failure_threshold_opens_incident_with_safe_related_events(
             )
             assert enqueued_delivery_ids == [deliveries[0].id]
             assert provider_calls == []
+            opened_log = next(
+                record
+                for record in caplog.records
+                if getattr(record, "event", None) == "incident_opened"
+            )
+            assert opened_log.monitor_id == str(monitor.id)
+            assert opened_log.monitor_run_id == str(runs[-1].id)
+            assert opened_log.monitor_check_id == str(checks[-1].id)
+            assert opened_log.incident_id == str(incident.id)
+            notification_log = next(
+                record
+                for record in caplog.records
+                if getattr(record, "event", None) == "notification_event_created"
+            )
+            assert notification_log.incident_id == str(incident.id)
+            assert notification_log.notification_delivery_id == str(deliveries[0].id)
+            assert {
+                record.monitor_run_id
+                for record in caplog.records
+                if getattr(record, "event", None) == "monitor_worker_started"
+            } == {str(run.id) for run in runs}
         finally:
             await engine.dispose()
 
@@ -1231,11 +1254,13 @@ def test_recovery_counter_write_failure_rolls_back_successful_check(
 @pytest.mark.parametrize("recovery_threshold", [1, 3])
 def test_recovery_threshold_resolves_once_and_allows_later_incident(
     recovery_threshold: int,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     async def scenario() -> None:
         engine, sessions = await create_session_factory()
         try:
             await reset_database(sessions)
+            caplog.set_level(logging.INFO, logger="app.monitoring.worker")
             monitor, opening_run = await create_monitor_run(
                 sessions,
                 email=f"resolve-{recovery_threshold}@example.com",
@@ -1348,6 +1373,15 @@ def test_recovery_threshold_resolves_once_and_allows_later_incident(
             ]
             assert len({delivery.deduplication_key for delivery in deliveries}) == 2
             assert enqueued_delivery_ids == [delivery.id for delivery in deliveries]
+            resolved_log = next(
+                record
+                for record in caplog.records
+                if getattr(record, "event", None) == "incident_resolved"
+            )
+            assert resolved_log.monitor_id == str(monitor.id)
+            assert resolved_log.monitor_run_id == str(recovery_runs[-1].id)
+            assert resolved_log.monitor_check_id == str(recovery_check.id)
+            assert resolved_log.incident_id == str(resolved_incident.id)
 
             fixed_resolved_at = resolved_incident.resolved_at
             additional_success = await create_additional_run(sessions, monitor.id)
