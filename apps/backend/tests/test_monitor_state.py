@@ -1,8 +1,11 @@
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from app.models import Monitor
 from app.monitoring import (
     apply_monitor_result,
+    http_status_is_success,
     monitor_can_execute_request,
     monitor_is_scheduler_eligible,
 )
@@ -169,3 +172,51 @@ def test_monitor_result_transitions_unknown_up_down_and_recovered_states() -> No
     assert apply_monitor_result(current, success=True) == "incident_recovery_ready"
     assert current.status == "down"
     assert current.consecutive_successes == 2
+
+
+@pytest.mark.parametrize(
+    ("status_code", "expected"),
+    [(199, False), (200, True), (299, True), (300, False)],
+)
+def test_http_success_range_is_inclusive_at_both_boundaries(
+    status_code: int,
+    expected: bool,
+) -> None:
+    assert http_status_is_success(
+        status_code,
+        expected_status_min=200,
+        expected_status_max=299,
+    ) is expected
+
+
+@pytest.mark.parametrize("threshold", [1, 3])
+def test_failure_threshold_signals_one_incident_opening(threshold: int) -> None:
+    current = monitor(status="up", enabled=True, next_check_at=None)
+    current.failure_threshold = threshold
+
+    transitions = [
+        apply_monitor_result(current, success=False)
+        for _ in range(threshold + 1)
+    ]
+
+    assert transitions.count("incident_opened") == 1
+    assert transitions[threshold - 1] == "incident_opened"
+    assert current.status == "down"
+
+
+@pytest.mark.parametrize("threshold", [1, 3])
+def test_recovery_threshold_signals_resolution_after_uninterrupted_successes(
+    threshold: int,
+) -> None:
+    current = monitor(status="down", enabled=True, next_check_at=None)
+    current.recovery_threshold = threshold
+
+    for _ in range(threshold - 1):
+        assert apply_monitor_result(current, success=True) is None
+    assert apply_monitor_result(current, success=True) == "incident_recovery_ready"
+
+    apply_monitor_result(current, success=False)
+    assert current.consecutive_successes == 0
+    for _ in range(threshold - 1):
+        assert apply_monitor_result(current, success=True) is None
+    assert apply_monitor_result(current, success=True) == "incident_recovery_ready"

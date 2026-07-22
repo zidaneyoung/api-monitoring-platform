@@ -72,6 +72,10 @@ def test_scheduler_selects_due_monitors_and_queues_run_identifiers(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
+    if os.getenv("TEST_DATABASE_URL") is None:
+        pytest.skip("TEST_DATABASE_URL is required for scheduler integration tests")
+    if not hasattr(time, "tzset"):
+        pytest.skip("process timezone switching requires time.tzset")
     monkeypatch.setenv("TZ", process_timezone)
     time.tzset()
 

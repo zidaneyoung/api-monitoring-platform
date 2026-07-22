@@ -72,6 +72,10 @@ def test_temporary_failure_retries_same_record_then_succeeds(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
+    if os.getenv("TEST_DATABASE_URL") is None:
+        pytest.skip("TEST_DATABASE_URL is required")
+    if not hasattr(time, "tzset"):
+        pytest.skip("process timezone switching requires time.tzset")
     monkeypatch.setenv("TZ", process_timezone)
     time.tzset()
 

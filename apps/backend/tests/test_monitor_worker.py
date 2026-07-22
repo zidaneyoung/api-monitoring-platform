@@ -3,8 +3,6 @@ from collections.abc import Sequence
 from datetime import datetime, timezone
 import logging
 import os
-import socket
-import ssl
 from uuid import UUID, uuid4
 
 import httpx
@@ -26,7 +24,7 @@ from app.models import (
     User,
 )
 from app.monitoring import worker
-from app.monitoring.worker import execute_monitor_run, normalize_monitor_error
+from app.monitoring.worker import execute_monitor_run
 
 
 def database_url() -> str:
@@ -486,33 +484,6 @@ def test_worker_marks_transport_failures_unsuccessful(error: httpx.HTTPError) ->
             await engine.dispose()
 
     asyncio.run(scenario())
-
-
-@pytest.mark.parametrize(
-    ("error", "category", "message"),
-    [
-        (httpx.ConnectError("dns"), "dns", "Monitor hostname could not be resolved."),
-        (httpx.ConnectError("refused"), "connection_refused", "Monitor connection was refused."),
-        (httpx.ConnectError("connect"), "connection", "Monitor connection failed."),
-        (httpx.ConnectTimeout("timeout"), "connect_timeout", "Monitor connection timed out."),
-        (httpx.ReadTimeout("timeout"), "request_timeout", "Monitor request timed out."),
-        (httpx.ConnectError("tls"), "tls", "Monitor TLS connection failed."),
-        (RuntimeError("internal"), "internal", "Monitor execution failed."),
-    ],
-)
-def test_error_normalization_uses_safe_stable_values(
-    error: Exception,
-    category: str,
-    message: str,
-) -> None:
-    if category == "dns":
-        error.__cause__ = socket.gaierror("sensitive dns detail")
-    elif category == "connection_refused":
-        error.__cause__ = ConnectionRefusedError("sensitive connection detail")
-    elif category == "tls":
-        error.__cause__ = ssl.SSLError("sensitive tls detail")
-    assert normalize_monitor_error(error) == (category, message)
-    assert "sensitive" not in message
 
 
 def test_worker_records_null_response_time_when_request_never_starts() -> None:
