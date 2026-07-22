@@ -9,7 +9,7 @@ from sqlalchemy.orm import selectinload
 
 from app.database import get_database_session
 from app.incidents import incident_duration_seconds
-from app.models import Incident, IncidentEvent, MonitorCheck
+from app.models import Incident, IncidentEvent, Monitor, MonitorCheck
 from app.routes.auth import AuthenticatedSession, require_authenticated_session
 from app.schemas.incident import (
     IncidentCheckResponse,
@@ -42,8 +42,15 @@ def _duration(incident: Incident, now: datetime) -> int:
     )
 
 
-def _check_response(check: MonitorCheck | None) -> IncidentCheckResponse | None:
-    if check is None:
+def _ownership_filters(owner_id: UUID):
+    return Incident.user_id == owner_id, Monitor.user_id == owner_id
+
+
+def _check_response(
+    check: MonitorCheck | None,
+    monitor_id: UUID,
+) -> IncidentCheckResponse | None:
+    if check is None or check.monitor_id != monitor_id:
         return None
     return IncidentCheckResponse(
         id=check.id,
@@ -92,17 +99,21 @@ async def list_incidents(
     authenticated: AuthenticatedSession = Depends(require_authenticated_session),
     session: AsyncSession = Depends(get_database_session),
 ) -> IncidentListResponse:
-    filters = [Incident.user_id == authenticated.user.id]
+    filters = list(_ownership_filters(authenticated.user.id))
     if incident_status == "open":
         filters.append(Incident.status.in_(("open", "acknowledged")))
     elif incident_status == "resolved":
         filters.append(Incident.status == "resolved")
 
     total = await session.scalar(
-        select(func.count()).select_from(Incident).where(*filters)
+        select(func.count())
+        .select_from(Incident)
+        .join(Incident.monitor)
+        .where(*filters)
     )
     result = await session.execute(
         select(Incident)
+        .join(Incident.monitor)
         .options(selectinload(Incident.monitor))
         .where(*filters)
         .order_by(Incident.opened_at.desc(), Incident.id.desc())
@@ -133,6 +144,7 @@ async def get_incident(
 ) -> IncidentResponse:
     result = await session.execute(
         select(Incident)
+        .join(Incident.monitor)
         .options(
             selectinload(Incident.monitor),
             selectinload(Incident.triggering_check),
@@ -141,7 +153,7 @@ async def get_incident(
         )
         .where(
             Incident.id == incident_id,
-            Incident.user_id == authenticated.user.id,
+            *_ownership_filters(authenticated.user.id),
         )
     )
     incident = result.scalar_one_or_none()
@@ -157,7 +169,13 @@ async def get_incident(
             id=incident.monitor.id,
             name=incident.monitor.name,
         ),
-        triggering_check=_check_response(incident.triggering_check),
-        recovery_check=_check_response(incident.recovery_check),
+        triggering_check=_check_response(
+            incident.triggering_check,
+            incident.monitor_id,
+        ),
+        recovery_check=_check_response(
+            incident.recovery_check,
+            incident.monitor_id,
+        ),
         events=[_event_response(event) for event in incident.events],
     )
