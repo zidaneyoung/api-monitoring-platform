@@ -234,7 +234,7 @@ def test_current_user_rejects_request_without_cookie() -> None:
         app.dependency_overrides.clear()
 
     assert response.status_code == 401
-    assert response.json()["detail"]["code"] == "not_authenticated"
+    assert response.json()["error"]["code"] == "not_authenticated"
     assert store.get_calls == []
 
 
@@ -250,7 +250,7 @@ def test_current_user_rejects_invalid_or_expired_session(token: str) -> None:
         app.dependency_overrides.clear()
 
     assert response.status_code == 401
-    assert response.json()["detail"]["code"] == "not_authenticated"
+    assert response.json()["error"]["code"] == "not_authenticated"
     assert token not in response.text
     assert "amp_session=\"\"" in response.headers["set-cookie"]
     assert "Max-Age=0" in response.headers["set-cookie"]

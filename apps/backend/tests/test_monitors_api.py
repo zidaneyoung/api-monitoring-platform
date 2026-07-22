@@ -385,7 +385,7 @@ def test_monitor_creation_requires_authentication() -> None:
         app.dependency_overrides.pop(get_database_session, None)
 
     assert response.status_code == 401
-    assert response.json()["detail"]["code"] == "not_authenticated"
+    assert response.json()["error"]["code"] == "not_authenticated"
 
 
 @pytest.mark.parametrize(
@@ -428,8 +428,12 @@ def test_monitor_creation_rejects_invalid_configuration(
         app.dependency_overrides.pop(require_authenticated_session, None)
 
     assert response.status_code == 422
-    assert any(error["field"] == field for error in response.json()["errors"])
-    assert all("input" not in error for error in response.json()["errors"])
+    assert any(
+        error["field"] == field for error in response.json()["error"]["fields"]
+    )
+    assert all(
+        "input" not in error for error in response.json()["error"]["fields"]
+    )
 
 
 @pytest.mark.parametrize("required_field", ["name", "url"])
@@ -446,7 +450,7 @@ def test_monitor_creation_requires_name_and_url(required_field: str) -> None:
         app.dependency_overrides.pop(require_authenticated_session, None)
 
     assert response.status_code == 422
-    assert response.json()["errors"] == [
+    assert response.json()["error"]["fields"] == [
         {
             "field": required_field,
             "message": (
@@ -499,7 +503,7 @@ def test_monitor_creation_rejects_non_public_destinations(url: str) -> None:
 
     assert response.status_code == 422
     assert response.json() == {
-        "detail": {
+        "error": {
             "code": "unsafe_monitor_destination",
             "message": "Monitor URL must resolve to a public destination.",
         }
@@ -528,7 +532,7 @@ def test_monitor_creation_rejects_hostname_resolving_to_private_address() -> Non
         )
 
     assert response.status_code == 422
-    assert response.json()["detail"]["code"] == "unsafe_monitor_destination"
+    assert response.json()["error"]["code"] == "unsafe_monitor_destination"
     assert "10.0.0.5" not in response.text
     assert asyncio.run(stored_monitor_ids_for_user(owner.id)) == []
 
@@ -564,7 +568,7 @@ def test_monitor_creation_returns_safe_database_failure() -> None:
         app.dependency_overrides.pop(require_authenticated_session, None)
 
     assert response.status_code == 503
-    assert response.json()["detail"] == {
+    assert response.json()["error"] == {
         "code": "database_unavailable",
         "message": "Unable to create the monitor. Try again later.",
     }
@@ -977,7 +981,7 @@ def test_foreign_and_missing_monitor_details_share_controlled_response() -> None
         app.dependency_overrides.pop(require_authenticated_session, None)
 
     expected = {
-        "detail": {
+        "error": {
             "code": "monitor_not_found",
             "message": "Monitor not found.",
         }
@@ -1088,7 +1092,7 @@ def test_update_revalidates_hostname_and_rejects_private_resolution_atomically()
         )
 
     assert response.status_code == 422
-    assert response.json()["detail"]["code"] == "unsafe_monitor_destination"
+    assert response.json()["error"]["code"] == "unsafe_monitor_destination"
     assert "10.0.0.8" not in response.text
     assert asyncio.run(stored_monitor(monitor_id)).name == "Secure edit"
 
@@ -1107,7 +1111,7 @@ def test_foreign_and_missing_updates_share_controlled_response() -> None:
         app.dependency_overrides.pop(require_authenticated_session, None)
 
     expected = {
-        "detail": {"code": "monitor_not_found", "message": "Monitor not found."}
+        "error": {"code": "monitor_not_found", "message": "Monitor not found."}
     }
     assert foreign_response.status_code == 404
     assert missing_response.status_code == 404
@@ -1273,7 +1277,7 @@ def test_owner_delete_removes_monitor_and_all_cascaded_history() -> None:
     assert listed.json()["total"] == 0
     assert repeated.status_code == 404
     assert repeated.json() == {
-        "detail": {"code": "monitor_not_found", "message": "Monitor not found."}
+        "error": {"code": "monitor_not_found", "message": "Monitor not found."}
     }
     assert asyncio.run(stored_monitor_ids_for_user(owner.id)) == []
     assert asyncio.run(monitor_run_ids(monitor_id)) == []

@@ -415,9 +415,9 @@ def test_incident_details_hide_foreign_and_missing_incidents() -> None:
         == 404
     )
     assert (
-        foreign.json()["detail"]
-        == mismatched.json()["detail"]
-        == missing.json()["detail"]
+        foreign.json()["error"]
+        == mismatched.json()["error"]
+        == missing.json()["error"]
         == {
             "code": "incident_not_found",
             "message": "Incident not found.",

@@ -211,7 +211,26 @@ def test_malformed_uuid_paths_return_controlled_validation_errors() -> None:
 
     assert all(response.status_code == 422 for response in responses)
     assert all(response.headers["content-type"].startswith("application/json") for response in responses)
-    assert all(response.json() == {"errors": [{"field": "monitor_id" if "/monitors/" in response.request.url.path else "incident_id", "message": "Enter a valid value."}]} for response in responses)
+    assert all(
+        response.json()
+        == {
+            "error": {
+                "code": "validation_error",
+                "message": "Request validation failed.",
+                "fields": [
+                    {
+                        "field": (
+                            "monitor_id"
+                            if "/monitors/" in response.request.url.path
+                            else "incident_id"
+                        ),
+                        "message": "Enter a valid value.",
+                    }
+                ],
+            }
+        }
+        for response in responses
+    )
     assert all("Traceback" not in response.text for response in responses)
 
 
@@ -236,6 +255,10 @@ def test_invalid_query_inputs_use_consistent_validation_structure(path: str) -> 
 
     assert response.status_code == 422
     assert response.headers["content-type"].startswith("application/json")
-    assert list(response.json()) == ["errors"]
-    assert all(set(item) == {"field", "message"} for item in response.json()["errors"])
+    assert list(response.json()) == ["error"]
+    assert response.json()["error"]["code"] == "validation_error"
+    assert all(
+        set(item) == {"field", "message"}
+        for item in response.json()["error"]["fields"]
+    )
     assert "Traceback" not in response.text

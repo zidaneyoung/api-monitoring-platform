@@ -89,7 +89,7 @@ describe("MonitorForm", () => {
 
   it("shows field-specific validation and preserves entered values", async () => {
     fetchMock.mockResolvedValue(new Response(JSON.stringify({
-      detail: {
+      error: {
         code: "unsafe_monitor_destination",
         message: "Monitor URL must resolve to a public destination.",
       },

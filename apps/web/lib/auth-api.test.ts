@@ -58,7 +58,7 @@ describe("credential outcomes", () => {
     [500, { type: "unexpected_response" }],
   ])("maps login status %s without exposing the response body", async (status, expected) => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(
-      JSON.stringify({ detail: { message: "sensitive internal detail" } }),
+      JSON.stringify({ error: { code: "internal_error", message: "sensitive internal detail" } }),
       { status },
     )))
 
@@ -67,7 +67,11 @@ describe("credential outcomes", () => {
 
   it("returns safe field validation errors", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      errors: [{ field: "email", message: "Enter a valid email address." }],
+      error: {
+        code: "validation_error",
+        message: "Request validation failed.",
+        fields: [{ field: "email", message: "Enter a valid email address." }],
+      },
     }), { status: 422 })))
 
     await expect(registerUser("invalid", "monitor123")).resolves.toEqual({
