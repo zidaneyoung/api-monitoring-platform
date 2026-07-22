@@ -292,7 +292,6 @@ export function AuthForm({
     setTone("success");
     setStatus(copy.success);
     router.replace(redirectTo);
-    router.refresh();
   }
 
   return (

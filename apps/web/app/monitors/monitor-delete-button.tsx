@@ -54,9 +54,12 @@ export function MonitorDeleteButton({
   const isSubmitting = activePendingAction === "delete"
   const hasPendingMutation = activePendingAction !== null
 
-  useEffect(() => () => {
-    mountedRef.current = false
-    if (completionTimerRef.current) clearTimeout(completionTimerRef.current)
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      if (completionTimerRef.current) clearTimeout(completionTimerRef.current)
+    }
   }, [])
 
   function handleOpenChange(nextOpen: boolean) {

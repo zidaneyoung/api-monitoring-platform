@@ -27,7 +27,7 @@ describe("LogoutButton", () => {
     fireEvent.click(screen.getByRole("button", { name: "Log out" }))
 
     await waitFor(() => expect(replace).toHaveBeenCalledWith("/login"))
-    expect(refresh).toHaveBeenCalledOnce()
+    expect(refresh).not.toHaveBeenCalled()
     expect(fetchMock).toHaveBeenCalledWith(
       "http://localhost:8000/auth/logout",
       {
@@ -46,7 +46,7 @@ describe("LogoutButton", () => {
     fireEvent.click(screen.getByRole("button", { name: "Log out" }))
 
     await waitFor(() => expect(replace).toHaveBeenCalledWith("/login"))
-    expect(refresh).toHaveBeenCalledOnce()
+    expect(refresh).not.toHaveBeenCalled()
   })
 
   it.each([

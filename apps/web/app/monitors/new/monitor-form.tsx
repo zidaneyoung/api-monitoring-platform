@@ -113,7 +113,6 @@ export function MonitorForm({ monitor, successHref }: { monitor?: MonitorDto; su
   const dirtyRef = useRef(false)
   const mountedRef = useRef(true)
   const requestPendingRef = useRef(false)
-  const mutationVersionRef = useRef(0)
   const blockedTriggerRef = useRef<HTMLElement | null>(null)
   const [pendingHref, setPendingHref] = useState<string | null>(null)
   const isEditing = monitor !== undefined
@@ -124,10 +123,11 @@ export function MonitorForm({ monitor, successHref }: { monitor?: MonitorDto; su
   }, [errorVersion])
 
   useEffect(() => {
+    // Fast Refresh preserves refs while re-running effect cleanup in development.
+    // Restore the mount flag so a completed request can always clear its pending UI.
     mountedRef.current = true
     return () => {
       mountedRef.current = false
-      mutationVersionRef.current += 1
     }
   }, [])
 
@@ -197,11 +197,10 @@ export function MonitorForm({ monitor, successHref }: { monitor?: MonitorDto; su
 
     setErrors(emptyMonitorFormErrors())
     setIsSubmitting(true)
-    const mutationVersion = ++mutationVersionRef.current
     const outcome = monitor
       ? await updateMonitor(monitor.id, payload)
       : await createMonitor(payload)
-    if (!mountedRef.current || mutationVersion !== mutationVersionRef.current) return
+    if (!mountedRef.current) return
 
     requestPendingRef.current = false
     setIsSubmitting(false)

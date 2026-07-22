@@ -173,7 +173,7 @@ describe("MonitorDetails", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Delete monitor" }))
     fireEvent.click(within(screen.getByRole("dialog", { name: "Permanently delete Owned details API?" })).getByRole("button", { name: "Delete permanently" }))
     await waitFor(() => expect(navigationMock.push).toHaveBeenCalledWith(returnHref))
-    expect(navigationMock.refresh).toHaveBeenCalledOnce()
+    expect(navigationMock.refresh).not.toHaveBeenCalled()
     expect(fetchMock.mock.calls[1]?.[0]).toBe("http://localhost:8000/monitors/monitor-owned")
   })
 

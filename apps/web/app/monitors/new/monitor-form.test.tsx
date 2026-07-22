@@ -88,7 +88,7 @@ describe("MonitorForm", () => {
     expect(navigationMock.refresh).not.toHaveBeenCalled()
   })
 
-  it("navigates after a development effect remount", async () => {
+  it("completes creation after a development effect remount", async () => {
     fetchMock.mockResolvedValue(new Response(JSON.stringify({
       id: "monitor-1",
       name: "Public API",

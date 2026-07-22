@@ -81,7 +81,7 @@ describe("AuthForm", () => {
     }), { status: 200 })))
     expect(await screen.findByText("Signed in. Redirecting…")).toBeTruthy()
     expect(navigationMock.replace).toHaveBeenCalledWith("/monitors?state=ready")
-    expect(navigationMock.refresh).toHaveBeenCalledOnce()
+    expect(navigationMock.refresh).not.toHaveBeenCalled()
     expect(screen.getByRole("link", { name: "Create one" }).getAttribute("href")).toBe(
       "/register?next=%2Fmonitors%3Fstate%3Dready",
     )
@@ -145,7 +145,7 @@ describe("AuthForm", () => {
     expect(registrationOptions.credentials).toBe("include")
     expect(registrationOptions.body).toBe(JSON.stringify({ email: "Jane@Example.COM", password: "monitor123" }))
     expect(navigationMock.replace).toHaveBeenCalledWith("/dashboard")
-    expect(navigationMock.refresh).toHaveBeenCalledOnce()
+    expect(navigationMock.refresh).not.toHaveBeenCalled()
   })
 
   it("stops loading when registration fails", async () => {

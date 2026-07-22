@@ -259,5 +259,5 @@ export function MonitorDetails({
   if (state.type === "loading" || state.monitorId !== monitorId) return <LoadingDetails />
   if (state.type === "not_found") return <MessageDetails title="Monitor not found" description="This monitor does not exist or is not available to your account." returnHref={returnHref} />
   if (state.type === "error") return <MessageDetails title="Unable to display monitor" description="Monitor details could not be loaded. Try again." returnHref={returnHref} retry={() => { setState({ type: "loading", monitorId }); setRequestVersion((value) => value + 1) }} />
-  return <DetailsContent monitor={state.monitor} returnHref={returnHref} onMonitorChange={(monitor) => setState({ type: "ready", monitorId, monitor })} onDeleted={() => { router.push(returnHref); router.refresh() }} />
+  return <DetailsContent monitor={state.monitor} returnHref={returnHref} onMonitorChange={(monitor) => setState({ type: "ready", monitorId, monitor })} onDeleted={() => { router.push(returnHref) }} />
 }

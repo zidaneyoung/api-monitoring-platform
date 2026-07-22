@@ -56,7 +56,10 @@ export function MonitorStateButton({
   const isSubmitting = activePendingAction === action
   const hasPendingMutation = activePendingAction !== null
 
-  useEffect(() => () => { mountedRef.current = false }, [])
+  useEffect(() => {
+    mountedRef.current = true
+    return () => { mountedRef.current = false }
+  }, [])
 
   function handleOpenChange(nextOpen: boolean) {
     if (isSubmitting) return

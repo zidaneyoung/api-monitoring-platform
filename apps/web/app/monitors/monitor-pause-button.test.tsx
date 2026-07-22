@@ -1,3 +1,4 @@
+import { StrictMode } from "react"
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
@@ -70,7 +71,7 @@ describe("MonitorStateButton", () => {
     const paused: MonitorDto = { ...monitor, status: "paused", next_check_at: null }
     let finishRequest: (response: Response) => void = () => undefined
     fetchMock.mockReturnValue(new Promise<Response>((resolve) => { finishRequest = resolve }))
-    render(<MonitorStateButton monitor={monitor} onChanged={onChanged} />)
+    render(<StrictMode><MonitorStateButton monitor={monitor} onChanged={onChanged} /></StrictMode>)
 
     fireEvent.click(screen.getByRole("button", { name: "Pause monitor" }))
     const dialog = screen.getByRole("dialog", { name: "Pause Public API?" })

@@ -1,3 +1,4 @@
+import { StrictMode } from "react"
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
@@ -67,7 +68,7 @@ describe("MonitorDeleteButton", () => {
   it("deletes once, shows pending text, announces success, then completes", async () => {
     let finishRequest: (response: Response) => void = () => undefined
     fetchMock.mockReturnValue(new Promise<Response>((resolve) => { finishRequest = resolve }))
-    render(<MonitorDeleteButton monitor={monitor} onDeleted={onDeleted} />)
+    render(<StrictMode><MonitorDeleteButton monitor={monitor} onDeleted={onDeleted} /></StrictMode>)
 
     fireEvent.click(screen.getByRole("button", { name: "Delete monitor" }))
     const dialog = screen.getByRole("dialog", { name: "Permanently delete Public API?" })

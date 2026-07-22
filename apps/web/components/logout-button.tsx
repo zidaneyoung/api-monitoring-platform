@@ -28,7 +28,6 @@ export function LogoutButton({
       || outcome.type === "unauthenticated"
     ) {
       router.replace("/login")
-      router.refresh()
       return
     }
 
