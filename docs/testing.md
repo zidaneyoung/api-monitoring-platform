@@ -40,3 +40,37 @@ link-local, metadata, multicast, reserved, and unspecified destinations are neve
 passed to a real socket. Each redirect target is validated before the controlled
 transport can observe a request, while public IPv4, IPv6, hostname, and redirect
 destinations remain accepted.
+
+## PostgreSQL, Redis, Celery, and SMTP integration tests
+
+Requirements:
+
+- Docker Engine or Docker Desktop with Docker Compose v2.
+- No development or production service credentials.
+
+Run the complete backend integration suite from the repository root:
+
+```powershell
+./scripts/run-integration-tests.ps1
+```
+
+The command creates the dedicated `api-monitoring-integration-tests` Compose
+project. It starts disposable PostgreSQL 16, Redis 7 database 15, and Mailpit
+services without publishing host ports. The test image installs only repository
+requirements, applies every Alembic migration, clears the isolated database and
+Redis state, then runs the backend suite. A `finally` block removes the project
+containers, network, and volumes after success or failure.
+
+For CI, execute the same Compose lifecycle and preserve the test container exit
+code:
+
+```powershell
+docker compose --project-name api-monitoring-integration-tests --file compose.integration.yaml up --build --abort-on-container-exit --exit-code-from tests
+docker compose --project-name api-monitoring-integration-tests --file compose.integration.yaml down --volumes --remove-orphans
+```
+
+The test process rejects a database name without `test` or `integration`, rejects
+Redis database 0, and confirms test URLs differ from application URLs. Scheduler
+and worker functions use the real migrated PostgreSQL database; authentication and
+rate-limit tests use the real isolated Redis service; notification templates use
+local Mailpit. No production service or real recipient is contacted.
