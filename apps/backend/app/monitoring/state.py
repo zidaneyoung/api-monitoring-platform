@@ -3,6 +3,17 @@ from datetime import datetime
 from app.models import Monitor
 
 
+def http_status_is_success(
+    status_code: int,
+    *,
+    expected_status_min: int,
+    expected_status_max: int,
+) -> bool:
+    """Evaluate the inclusive status-code range configured for a monitor."""
+
+    return expected_status_min <= status_code <= expected_status_max
+
+
 def monitor_is_scheduler_eligible(monitor: Monitor | None, now: datetime) -> bool:
     """Return whether a persisted monitor may be selected for a due run."""
 

@@ -25,7 +25,11 @@ from app.models import (
     NotificationDelivery,
     User,
 )
-from app.monitoring.state import apply_monitor_result, monitor_can_execute_request
+from app.monitoring.state import (
+    apply_monitor_result,
+    http_status_is_success,
+    monitor_can_execute_request,
+)
 from app.notifications.dispatcher import enqueue_notification_delivery
 from app.security.monitor_destinations import (
     DestinationResolver,
@@ -676,10 +680,10 @@ async def execute_monitor_run(
         response_time_ms = response.response_time_ms
         http_status_code = response.status_code
         tls_expires_at = response.tls_expires_at
-        success = (
-            request_or_result.expected_status_min
-            <= http_status_code
-            <= request_or_result.expected_status_max
+        success = http_status_is_success(
+            http_status_code,
+            expected_status_min=request_or_result.expected_status_min,
+            expected_status_max=request_or_result.expected_status_max,
         )
     except DestinationSecurityError:
         log_event(

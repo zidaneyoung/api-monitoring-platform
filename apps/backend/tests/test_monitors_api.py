@@ -77,6 +77,10 @@ async def override_database_session() -> AsyncIterator[AsyncSession]:
         await engine.dispose()
 
 
+async def unused_database_session() -> AsyncIterator[object]:
+    yield object()
+
+
 async def stored_monitor(monitor_id: UUID) -> Monitor:
     engine = create_database_engine(database_url())
     sessions = async_sessionmaker(engine, expire_on_commit=False)
@@ -769,7 +773,7 @@ def test_monitor_latest_check_fields_match_persisted_results_and_keep_utc() -> N
 
 
 def test_recent_checks_requires_authentication() -> None:
-    app.dependency_overrides[get_database_session] = override_database_session
+    app.dependency_overrides[get_database_session] = unused_database_session
     try:
         with TestClient(app) as client:
             response = client.get(f"/monitors/{uuid4()}/checks")
@@ -823,7 +827,7 @@ def test_recent_checks_are_owned_newest_first_paginated_safe_and_nullable() -> N
 
 
 def test_response_time_series_requires_authentication() -> None:
-    app.dependency_overrides[get_database_session] = override_database_session
+    app.dependency_overrides[get_database_session] = unused_database_session
     try:
         with TestClient(app) as client:
             response = client.get(f"/monitors/{uuid4()}/response-times")
