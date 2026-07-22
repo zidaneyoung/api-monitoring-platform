@@ -1,9 +1,15 @@
 import re
+import logging
 
 from fastapi import Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException
+
+from app.structured_logging import log_event
+
+
+logger = logging.getLogger(__name__)
 
 
 _SAFE_NAME = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
@@ -136,6 +142,12 @@ async def http_error_response(_request: Request, error: Exception) -> JSONRespon
 
 
 async def internal_error_response(_request: Request, _error: Exception) -> JSONResponse:
+    log_event(
+        logger,
+        logging.ERROR,
+        "api_unexpected_failure",
+        safe_error_category="internal",
+    )
     return JSONResponse(
         status_code=500,
         content=_error_content("internal_error", "An internal error occurred."),

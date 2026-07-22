@@ -12,6 +12,7 @@ from app.database import SessionFactory
 from app.models import Monitor, MonitorRun
 from app.monitoring.state import monitor_is_scheduler_eligible
 from app.utc import as_utc, utc_now
+from app.structured_logging import log_event
 
 
 logger = logging.getLogger(__name__)
@@ -74,9 +75,11 @@ async def _schedule_due_monitors(
                             )
                             await session.flush()
                     except IntegrityError:
-                        logger.warning(
+                        log_event(
+                            logger,
+                            logging.WARNING,
                             "monitor_scheduler_duplicate_run",
-                            extra={"monitor_id": str(monitor.id)},
+                            monitor_id=str(monitor.id),
                         )
                     else:
                         scheduled += 1
@@ -84,11 +87,16 @@ async def _schedule_due_monitors(
                         seconds=monitor.interval_seconds
                     )
     except SQLAlchemyError:
-        logger.warning("monitor_scheduler_database_failure")
+        log_event(logger, logging.WARNING, "monitor_scheduler_database_failure")
         return 0
 
     if scheduled:
-        logger.info("monitor_scheduler_runs_created", extra={"run_count": scheduled})
+        log_event(
+            logger,
+            logging.INFO,
+            "monitor_scheduler_runs_created",
+            run_count=scheduled,
+        )
     return scheduled
 
 
@@ -123,15 +131,21 @@ async def _enqueue_pending_monitor_runs(
 
                     run.enqueued_at = utc_now()
                     enqueued += 1
-                    logger.info(
+                    log_event(
+                        logger,
+                        logging.INFO,
                         "monitor_scheduler_run_enqueued",
-                        extra={"monitor_run_id": run_id},
+                        monitor_run_id=run_id,
                     )
         except QueueDispatchError:
-            logger.warning("monitor_scheduler_queue_failure")
+            log_event(logger, logging.WARNING, "monitor_scheduler_queue_failure")
             return enqueued
         except SQLAlchemyError:
-            logger.warning("monitor_scheduler_database_failure_while_enqueuing")
+            log_event(
+                logger,
+                logging.WARNING,
+                "monitor_scheduler_database_failure_while_enqueuing",
+            )
             return enqueued
 
 
@@ -150,5 +164,12 @@ async def dispatch_due_monitors(
     enqueued = await _enqueue_pending_monitor_runs(
         session_factory=session_factory,
         enqueue=enqueue,
+    )
+    log_event(
+        logger,
+        logging.INFO,
+        "monitor_scheduler_dispatch",
+        scheduled_count=scheduled,
+        enqueued_count=enqueued,
     )
     return SchedulerDispatchResult(scheduled=scheduled, enqueued=enqueued)

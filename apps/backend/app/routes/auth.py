@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from ipaddress import ip_address, ip_network
+import logging
 from uuid import UUID
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
@@ -27,6 +28,10 @@ from app.security.sessions import (
     get_session_store,
     set_session_cookie,
 )
+from app.structured_logging import log_event
+
+
+logger = logging.getLogger(__name__)
 
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
@@ -363,6 +368,12 @@ async def login_user(
         or not user.is_active
         or user.disabled_at is not None
     ):
+        log_event(
+            logger,
+            logging.WARNING,
+            "authentication_failed",
+            safe_error_category="invalid_credentials",
+        )
         raise _invalid_credentials_error()
 
     try:

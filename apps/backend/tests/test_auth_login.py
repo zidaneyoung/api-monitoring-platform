@@ -1,6 +1,7 @@
 import asyncio
 from datetime import UTC, datetime
 import json
+import logging
 from uuid import UUID, uuid4
 
 from fastapi.testclient import TestClient
@@ -112,6 +113,7 @@ def test_invalid_credentials_use_same_generic_response(
     client_and_store: tuple[TestClient, FakeSessionStore],
     monkeypatch: pytest.MonkeyPatch,
     account_exists: bool,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     client, store = client_and_store
     user = make_user() if account_exists else None
@@ -120,6 +122,7 @@ def test_invalid_credentials_use_same_generic_response(
         return user
 
     monkeypatch.setattr(auth_routes, "find_user_by_email", find_user)
+    caplog.set_level(logging.WARNING, logger="app.routes.auth")
     response = client.post(
         "/auth/login",
         json={"email": "user@example.com", "password": "wrong-password"},
@@ -134,6 +137,9 @@ def test_invalid_credentials_use_same_generic_response(
     }
     assert response.headers["cache-control"] == "no-store"
     assert store.created_for == []
+    assert "authentication_failed" in caplog.messages
+    assert "user@example.com" not in caplog.text
+    assert "wrong-password" not in caplog.text
 
 
 def test_disabled_user_cannot_log_in_and_gets_generic_response(

@@ -1,10 +1,26 @@
-import os
 import asyncio
+import logging
+import os
 
 from celery import Celery
+from celery.signals import after_setup_logger, after_setup_task_logger
 
 from app.config import load_settings
 from app.notifications.constants import EMAIL_DELIVERY_TASK
+from app.structured_logging import (
+    bind_log_context,
+    configure_structured_logging,
+    new_correlation_id,
+)
+
+
+configure_structured_logging()
+
+
+@after_setup_logger.connect
+@after_setup_task_logger.connect
+def configure_celery_logging(**_: object) -> None:
+    configure_structured_logging()
 
 
 def _redis_url() -> str:
@@ -22,6 +38,7 @@ celery_app = Celery(
 
 celery_app.conf.update(
     broker_connection_retry_on_startup=True,
+    worker_hijack_root_logger=False,
     beat_schedule={
         "dispatch-due-monitors": {
             "task": "app.monitoring.scheduler.dispatch_due_monitors_task",
@@ -52,7 +69,8 @@ def dispatch_due_monitors_task() -> dict[str, int]:
         finally:
             await dispose_database_engine()
 
-    return asyncio.run(run_cycle())
+    with bind_log_context(correlation_id=new_correlation_id()):
+        return asyncio.run(run_cycle())
 
 
 @celery_app.task(name="app.monitoring.worker.execute_monitor_run")
@@ -69,7 +87,11 @@ def execute_monitor_run_task(run_id: str) -> dict[str, str | bool]:
         finally:
             await dispose_database_engine()
 
-    return asyncio.run(run_task())
+    with bind_log_context(
+        correlation_id=run_id,
+        monitor_run_id=run_id,
+    ):
+        return asyncio.run(run_task())
 
 
 @celery_app.task(
@@ -89,4 +111,8 @@ def deliver_notification_task(delivery_id: str) -> str:
         finally:
             await dispose_database_engine()
 
-    return asyncio.run(run_task())
+    with bind_log_context(
+        correlation_id=delivery_id,
+        notification_delivery_id=delivery_id,
+    ):
+        return asyncio.run(run_task())

@@ -70,6 +70,7 @@ async def create_monitor(
 def test_scheduler_selects_due_monitors_and_queues_run_identifiers(
     process_timezone: str,
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     monkeypatch.setenv("TZ", process_timezone)
     time.tzset()
@@ -78,6 +79,7 @@ def test_scheduler_selects_due_monitors_and_queues_run_identifiers(
         engine, sessions = await create_session_factory()
         try:
             await reset_database(sessions)
+            caplog.set_level(logging.INFO, logger="app.monitoring.scheduler")
             now = datetime(2026, 7, 17, 12, 0, tzinfo=timezone.utc)
             first_due = await create_monitor(
                 sessions,
@@ -141,6 +143,19 @@ def test_scheduler_selects_due_monitors_and_queues_run_identifiers(
             assert all(run.enqueued_at is not None for run in runs)
             assert monitors[first_due.id].next_check_at == now + timedelta(seconds=30)
             assert monitors[second_due.id].next_check_at == now + timedelta(seconds=60)
+            dispatch_log = next(
+                record
+                for record in caplog.records
+                if getattr(record, "event", None) == "monitor_scheduler_dispatch"
+            )
+            assert dispatch_log.scheduled_count == 2
+            assert dispatch_log.enqueued_count == 2
+            assert {
+                record.monitor_run_id
+                for record in caplog.records
+                if getattr(record, "event", None)
+                == "monitor_scheduler_run_enqueued"
+            } == {str(run.id) for run in runs}
         finally:
             await engine.dispose()
 

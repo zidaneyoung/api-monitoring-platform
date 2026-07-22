@@ -1,5 +1,6 @@
 import asyncio
 from datetime import datetime, timedelta, timezone
+import logging
 import os
 import smtplib
 import time
@@ -69,6 +70,7 @@ def test_retry_backoff_increases_and_is_bounded() -> None:
 def test_temporary_failure_retries_same_record_then_succeeds(
     process_timezone: str,
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     monkeypatch.setenv("TZ", process_timezone)
     time.tzset()
@@ -94,6 +96,7 @@ def test_temporary_failure_retries_same_record_then_succeeds(
             retry_calls.append((delivery_id, countdown))
 
         try:
+            caplog.set_level(logging.INFO, logger="app.notifications.email")
             delivery = await create_opening_delivery(sessions)
             first = await deliver_notification(
                 delivery.id,
@@ -111,6 +114,15 @@ def test_temporary_failure_retries_same_record_then_succeeds(
             assert after_failure.next_retry_at == current_time + timedelta(seconds=60)
             assert after_failure.provider_error_code == "smtp_temporary"
             assert retry_calls == [(delivery.id, 60)]
+            temporary_log = next(
+                record
+                for record in caplog.records
+                if getattr(record, "event", None)
+                == "email_delivery_temporary_failure"
+            )
+            assert temporary_log.notification_delivery_id == str(delivery.id)
+            assert temporary_log.safe_error_category == "smtp_temporary"
+            assert temporary_log.attempt_number == 1
 
             early = await deliver_notification(
                 delivery.id,
@@ -136,6 +148,12 @@ def test_temporary_failure_retries_same_record_then_succeeds(
             assert delivered.id == delivery.id
             assert delivered.status == "delivered"
             assert delivered.attempt_count == 2
+            success_log = next(
+                record
+                for record in caplog.records
+                if getattr(record, "event", None) == "email_delivery_succeeded"
+            )
+            assert success_log.notification_delivery_id == str(delivery.id)
         finally:
             await engine.dispose()
 
@@ -182,7 +200,9 @@ def test_permanent_failure_stops_without_retry() -> None:
     asyncio.run(scenario())
 
 
-def test_temporary_failure_at_max_attempts_is_exhausted() -> None:
+def test_temporary_failure_at_max_attempts_is_exhausted(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     async def scenario() -> None:
         database_url = os.getenv("TEST_DATABASE_URL")
         if database_url is None:
@@ -198,6 +218,7 @@ def test_temporary_failure_at_max_attempts_is_exhausted() -> None:
             retry_calls.append((delivery_id, countdown))
 
         try:
+            caplog.set_level(logging.WARNING, logger="app.notifications.email")
             delivery = await create_opening_delivery(sessions)
             async with sessions() as session:
                 persisted = await session.get(NotificationDelivery, delivery.id)
@@ -221,6 +242,15 @@ def test_temporary_failure_at_max_attempts_is_exhausted() -> None:
             assert failed.provider_error_code == "attempts_exhausted"
             assert failed.next_retry_at is None
             assert retry_calls == []
+            failure_log = next(
+                record
+                for record in caplog.records
+                if getattr(record, "event", None)
+                == "email_delivery_permanent_failure"
+            )
+            assert failure_log.notification_delivery_id == str(delivery.id)
+            assert failure_log.safe_error_category == "attempts_exhausted"
+            assert failure_log.attempt_number == MAX_EMAIL_ATTEMPTS
         finally:
             await engine.dispose()
 
