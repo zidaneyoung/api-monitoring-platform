@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from ipaddress import ip_network
 import os
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlsplit
 
 
 @dataclass(frozen=True)
@@ -31,6 +31,8 @@ class Settings:
     redis_port: int
     redis_db: int
     redis_url: str
+    celery_broker_url: str
+    celery_result_backend: str
     scheduler_dispatch_interval_seconds: int
     monitor_max_response_bytes: int
     email_host: str
@@ -70,6 +72,67 @@ def _required_single_line(name: str, default: str) -> str:
     return value
 
 
+def _require_production_variables(names: tuple[str, ...]) -> None:
+    missing = [name for name in names if not os.getenv(name, "").strip()]
+    if missing:
+        raise ValueError(
+            "Missing required production environment variables: "
+            + ", ".join(sorted(missing))
+        )
+
+
+def _validate_frontend_origin(value: str) -> str:
+    try:
+        parsed = urlsplit(value)
+    except ValueError:
+        raise ValueError(
+            "FRONTEND_ORIGIN must be a credential-free HTTPS origin without a path"
+        ) from None
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError(
+            "FRONTEND_ORIGIN must be a credential-free HTTPS origin without a path"
+        )
+    return value.rstrip("/")
+
+
+def _validate_database_url(value: str) -> None:
+    try:
+        parsed = urlsplit(value)
+    except ValueError:
+        raise ValueError(
+            "DATABASE_URL must be a complete PostgreSQL connection URL"
+        ) from None
+    if (
+        parsed.scheme not in {"postgresql", "postgresql+asyncpg"}
+        or not parsed.hostname
+        or not parsed.username
+        or parsed.password is None
+        or not parsed.path.strip("/")
+    ):
+        raise ValueError(
+            "DATABASE_URL must be a complete PostgreSQL connection URL"
+        )
+
+
+def _validate_redis_url(name: str, value: str) -> None:
+    try:
+        parsed = urlsplit(value)
+    except ValueError:
+        raise ValueError(
+            f"{name} must be a complete Redis connection URL"
+        ) from None
+    if parsed.scheme not in {"redis", "rediss"} or not parsed.hostname:
+        raise ValueError(f"{name} must be a complete Redis connection URL")
+
+
 def _trusted_proxy_networks() -> tuple[str, ...]:
     raw_value = os.getenv("AUTH_TRUSTED_PROXY_ADDRESSES", "")
     networks: list[str] = []
@@ -81,7 +144,27 @@ def _trusted_proxy_networks() -> tuple[str, ...]:
 
 
 def load_settings() -> Settings:
-    environment = os.getenv("ENVIRONMENT", "development")
+    environment = _required_single_line("ENVIRONMENT", "development").lower()
+    production = environment == "production"
+    if production:
+        _require_production_variables(
+            (
+                "AUTH_RATE_LIMIT_KEY_SECRET",
+                "CELERY_BROKER_URL",
+                "CELERY_RESULT_BACKEND",
+                "DATABASE_URL",
+                "EMAIL_FROM",
+                "EMAIL_HOST",
+                "EMAIL_PASSWORD",
+                "EMAIL_PORT",
+                "EMAIL_USERNAME",
+                "EMAIL_USE_TLS",
+                "FRONTEND_ORIGIN",
+                "REDIS_URL",
+                "SESSION_COOKIE_NAME",
+            )
+        )
+
     session_ttl_seconds = _positive_int("SESSION_TTL_SECONDS", "3600")
     session_absolute_ttl_seconds = _positive_int(
         "SESSION_ABSOLUTE_TTL_SECONDS",
@@ -123,7 +206,7 @@ def load_settings() -> Settings:
     )
     email_timeout_seconds = _positive_int("EMAIL_TIMEOUT_SECONDS", "10")
 
-    session_cookie_secure = environment.lower() == "production" or _boolean(
+    session_cookie_secure = production or _boolean(
         "SESSION_COOKIE_SECURE",
         False,
     )
@@ -139,6 +222,10 @@ def load_settings() -> Settings:
     ).strip()
     if not auth_rate_limit_key_secret:
         raise ValueError("AUTH_RATE_LIMIT_KEY_SECRET must not be empty")
+    if production and len(auth_rate_limit_key_secret) < 32:
+        raise ValueError(
+            "AUTH_RATE_LIMIT_KEY_SECRET must contain at least 32 characters in production"
+        )
 
     database_host = os.getenv("DATABASE_HOST", "db")
     database_port = int(os.getenv("DATABASE_PORT", "5432"))
@@ -149,30 +236,58 @@ def load_settings() -> Settings:
     redis_port = int(os.getenv("REDIS_PORT", "6379"))
     redis_db = int(os.getenv("REDIS_DB", "0"))
 
-    database_url = os.getenv(
+    database_url = _required_single_line(
         "DATABASE_URL",
         (
             f"postgresql+asyncpg://{quote_plus(database_user)}:{quote_plus(database_password)}"
             f"@{database_host}:{database_port}/{database_name}"
         ),
     )
-    redis_url = os.getenv(
+    redis_url = _required_single_line(
         "REDIS_URL", f"redis://{redis_host}:{redis_port}/{redis_db}"
     )
+    celery_broker_url = _required_single_line(
+        "CELERY_BROKER_URL",
+        redis_url,
+    )
+    celery_result_backend = _required_single_line(
+        "CELERY_RESULT_BACKEND",
+        celery_broker_url,
+    )
+    frontend_origin = _required_single_line(
+        "FRONTEND_ORIGIN",
+        "http://localhost:3000",
+    )
+    debug = _boolean("DEBUG", False)
+    auth_allow_missing_origin = _boolean(
+        "AUTH_ALLOW_MISSING_ORIGIN",
+        not production,
+    )
+
+    if production:
+        frontend_origin = _validate_frontend_origin(frontend_origin)
+        _validate_database_url(database_url)
+        _validate_redis_url("REDIS_URL", redis_url)
+        _validate_redis_url("CELERY_BROKER_URL", celery_broker_url)
+        _validate_redis_url("CELERY_RESULT_BACKEND", celery_result_backend)
+        if debug:
+            raise ValueError("DEBUG must be false in production")
+        if auth_allow_missing_origin:
+            raise ValueError("AUTH_ALLOW_MISSING_ORIGIN must be false in production")
 
     return Settings(
         environment=environment,
-        debug=os.getenv("DEBUG", "false").lower() == "true",
-        frontend_origin=os.getenv("FRONTEND_ORIGIN", "http://localhost:3000"),
-        session_cookie_name=os.getenv("SESSION_COOKIE_NAME", "amp_session"),
+        debug=debug,
+        frontend_origin=frontend_origin,
+        session_cookie_name=_required_single_line(
+            "SESSION_COOKIE_NAME",
+            "amp_session",
+        ),
         session_ttl_seconds=session_ttl_seconds,
         session_absolute_ttl_seconds=session_absolute_ttl_seconds,
         session_cookie_secure=session_cookie_secure,
         session_cookie_samesite=session_cookie_samesite,
-        auth_allow_missing_origin=_boolean(
-            "AUTH_ALLOW_MISSING_ORIGIN",
-            environment.lower() != "production",
-        ),
+        auth_allow_missing_origin=auth_allow_missing_origin,
         auth_rate_limit_key_secret=auth_rate_limit_key_secret,
         auth_trusted_proxy_networks=_trusted_proxy_networks(),
         auth_login_rate_limit_attempts=auth_login_rate_limit_attempts,
@@ -191,6 +306,8 @@ def load_settings() -> Settings:
         redis_port=redis_port,
         redis_db=redis_db,
         redis_url=redis_url,
+        celery_broker_url=celery_broker_url,
+        celery_result_backend=celery_result_backend,
         scheduler_dispatch_interval_seconds=scheduler_dispatch_interval_seconds,
         monitor_max_response_bytes=monitor_max_response_bytes,
         email_host=email_host,

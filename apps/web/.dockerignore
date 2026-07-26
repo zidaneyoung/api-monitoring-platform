@@ -6,6 +6,7 @@
 !next-env.d.ts
 !next.config.mjs
 !postcss.config.mjs
+!production-server.mjs
 !tsconfig.json
 !proxy.ts
 !app/

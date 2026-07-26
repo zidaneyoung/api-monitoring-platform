@@ -80,4 +80,5 @@ docker stop api-monitoring-frontend-check
 
 Production images do not require local source mounts. Runtime secrets must be
 injected through the deployment platform and must not be supplied as Docker
-build arguments.
+build arguments. The complete runtime contract and secret classification are
+documented in [Production configuration](production-configuration.md).

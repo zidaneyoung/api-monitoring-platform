@@ -1,5 +1,4 @@
 import asyncio
-import os
 
 from celery import Celery
 from celery.signals import after_setup_logger, after_setup_task_logger
@@ -22,17 +21,13 @@ def configure_celery_logging(**_: object) -> None:
     configure_structured_logging()
 
 
-def _redis_url() -> str:
-    return os.getenv(
-        "CELERY_BROKER_URL",
-        os.getenv("REDIS_URL", "redis://redis:6379/0"),
-    )
+settings = load_settings()
 
 
 celery_app = Celery(
     "api_monitoring_platform",
-    broker=_redis_url(),
-    backend=os.getenv("CELERY_RESULT_BACKEND", _redis_url()),
+    broker=settings.celery_broker_url,
+    backend=settings.celery_result_backend,
 )
 
 celery_app.conf.update(
@@ -41,7 +36,7 @@ celery_app.conf.update(
     beat_schedule={
         "dispatch-due-monitors": {
             "task": "app.monitoring.scheduler.dispatch_due_monitors_task",
-            "schedule": load_settings().scheduler_dispatch_interval_seconds,
+            "schedule": settings.scheduler_dispatch_interval_seconds,
         },
     },
     timezone="UTC",

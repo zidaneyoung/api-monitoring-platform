@@ -188,17 +188,23 @@ jobs:
             --publish 127.0.0.1:18800:8000 \
             --env ENVIRONMENT=production \
             --env FRONTEND_ORIGIN=https://frontend.example.invalid \
-            --env AUTH_RATE_LIMIT_KEY_SECRET=registry-validation-only \
+            --env SESSION_COOKIE_NAME=amp_session \
+            --env AUTH_RATE_LIMIT_KEY_SECRET=registry-validation-only-rate-limit-secret \
             --env DATABASE_URL=postgresql+asyncpg://validation:validation@db.invalid/validation \
             --env REDIS_URL=redis://redis.invalid:6379/0 \
             --env CELERY_BROKER_URL=redis://redis.invalid:6379/0 \
             --env CELERY_RESULT_BACKEND=redis://redis.invalid:6379/0 \
             --env EMAIL_HOST=smtp.example.invalid \
+            --env EMAIL_PORT=587 \
+            --env EMAIL_USERNAME=registry-validation \
+            --env EMAIL_PASSWORD=registry-validation \
             --env EMAIL_FROM=no-reply@example.invalid \
+            --env EMAIL_USE_TLS=true \
             "$backend_ref"
           docker run --detach --name published-frontend-check \
             --publish 127.0.0.1:13300:3000 \
             --env INTERNAL_API_BASE_URL=http://127.0.0.1:18800 \
+            --env SESSION_COOKIE_NAME=amp_session \
             "$frontend_ref"
 
           for container in published-backend-check published-frontend-check; do

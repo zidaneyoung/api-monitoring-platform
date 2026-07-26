@@ -404,7 +404,9 @@ def test_rate_limit_configuration_requires_positive_values(
 
 def test_authentication_security_configuration_is_validated(
     monkeypatch: pytest.MonkeyPatch,
+    production_environment: dict[str, str],
 ) -> None:
+    monkeypatch.setenv("ENVIRONMENT", "development")
     monkeypatch.setenv("AUTH_RATE_LIMIT_KEY_SECRET", "")
     with pytest.raises(ValueError, match="AUTH_RATE_LIMIT_KEY_SECRET must not be empty"):
         load_settings()
@@ -416,6 +418,10 @@ def test_authentication_security_configuration_is_validated(
 
     monkeypatch.setenv("AUTH_TRUSTED_PROXY_ADDRESSES", "127.0.0.1,10.0.0.0/8")
     monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv(
+        "AUTH_RATE_LIMIT_KEY_SECRET",
+        "production-test-rate-limit-secret-0002",
+    )
     monkeypatch.delenv("AUTH_ALLOW_MISSING_ORIGIN", raising=False)
     settings = load_settings()
 
