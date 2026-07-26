@@ -110,3 +110,14 @@ jobs:
       - name: Run isolated integration suite
         shell: pwsh
         run: ./scripts/run-integration-tests.ps1
+
+  migrations:
+    name: Production migration process
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Validate clean, repeated, and concurrent migrations
+        shell: pwsh
+        run: ./scripts/run-production-migration-tests.ps1

@@ -30,6 +30,9 @@ remains runtime configuration.
 The backend image is shared by all Python services:
 
 ```text
+Release migration:
+python -m app.production_migrations upgrade
+
 API:
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 
@@ -41,6 +44,12 @@ celery -A app.celery_app:celery_app worker --loglevel=info --queues=email
 
 Scheduler:
 celery -A app.celery_app:celery_app beat --loglevel=info --schedule /tmp/celerybeat-schedule
+```
+
+Inspect the connected database revision without changing it:
+
+```text
+python -m app.production_migrations current
 ```
 
 All images run as UID/GID `10001`. The scheduler writes its local beat state
