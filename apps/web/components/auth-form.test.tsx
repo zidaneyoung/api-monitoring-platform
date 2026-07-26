@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { AuthForm } from "@/components/auth-form"
@@ -183,7 +183,7 @@ describe("AuthForm", () => {
 
     expect(await screen.findByText("An account with this email already exists.")).toBeTruthy()
     expect(screen.getByText("Fix the highlighted fields and try again.")).toBeTruthy()
-    expect(document.activeElement).toBe(screen.getByLabelText("Email address"))
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText("Email address")))
     fireEvent.change(screen.getByLabelText("Email address"), { target: { value: "new@example.com" } })
     expect(screen.queryByText("An account with this email already exists.")).toBeNull()
   })
