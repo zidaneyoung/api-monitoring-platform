@@ -115,6 +115,29 @@ async function createMonitor(page: Page, name: string, url: string): Promise<voi
   await expect(page.getByRole("link", { name })).toBeVisible()
 }
 
+async function expectRecentCheckStatus(
+  page: Page,
+  status: "Success" | "Failure",
+): Promise<void> {
+  await expect(page.getByText("Recent checks", { exact: true })).toBeVisible()
+  const statusBadge = page.getByText(status, { exact: true })
+
+  for (let pageNumber = 1; pageNumber <= 100; pageNumber += 1) {
+    if (await statusBadge.count()) {
+      await expect(statusBadge.first()).toBeVisible()
+      return
+    }
+
+    const nextPage = page.getByRole("button", { name: "Next", exact: true })
+    if (!(await nextPage.isEnabled())) break
+
+    await nextPage.click()
+    await expect(page.getByText(`Page ${pageNumber + 1} of`)).toBeVisible()
+  }
+
+  throw new Error(`${status} was not found in the paginated monitor check history`)
+}
+
 test.describe.configure({ mode: "serial" })
 
 test("complete MVP journey opens and recovers one incident", async ({ page, browser }) => {
@@ -217,8 +240,8 @@ test("complete MVP journey opens and recovers one incident", async ({ page, brow
   await expect(page.getByText("resolved", { exact: true })).toBeVisible()
 
   await page.goto(`/monitors/${monitorId}`)
-  await expect(page.getByText("Failure", { exact: true }).first()).toBeVisible()
-  await expect(page.getByText("Success", { exact: true }).first()).toBeVisible()
+  await expectRecentCheckStatus(page, "Success")
+  await expectRecentCheckStatus(page, "Failure")
   await expect(page.getByRole("img", { name: /Response time in milliseconds/ })).toBeVisible()
 
   const isolatedContext = await browser.newContext()

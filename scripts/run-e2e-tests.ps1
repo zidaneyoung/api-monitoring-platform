@@ -85,7 +85,14 @@ try {
 }
 finally {
     if ($null -ne $FrontendProcess -and -not $FrontendProcess.HasExited) {
-        & taskkill.exe /PID $FrontendProcess.Id /T /F 2>$null | Out-Null
+        try {
+            & taskkill.exe /PID $FrontendProcess.Id /T /F 2>$null | Out-Null
+        }
+        catch {
+            if (Get-Process -Id $FrontendProcess.Id -ErrorAction SilentlyContinue) {
+                throw
+            }
+        }
     }
     if (Test-Path -LiteralPath $E2eNextOutput) {
         Remove-Item -LiteralPath $E2eNextOutput -Recurse -Force
