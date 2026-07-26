@@ -273,8 +273,8 @@ def test_disabled_current_user_session_is_invalidated() -> None:
 
 def test_production_cookie_is_secure_and_samesite_is_validated(
     monkeypatch: pytest.MonkeyPatch,
+    production_environment: dict[str, str],
 ) -> None:
-    monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.setenv("SESSION_COOKIE_SECURE", "false")
     monkeypatch.setenv("SESSION_COOKIE_SAMESITE", "lax")
     settings = load_settings()

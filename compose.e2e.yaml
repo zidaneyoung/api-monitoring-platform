@@ -52,7 +52,7 @@ services:
   target:
     build:
       context: ./apps/backend
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.test
     restart: "no"
     command: [python, -m, scripts.e2e_target]
     ports:

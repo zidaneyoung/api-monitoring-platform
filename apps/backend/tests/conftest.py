@@ -27,6 +27,37 @@ class AllowAllRateLimitStore:
         )
 
 
+@pytest.fixture
+def production_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> dict[str, str]:
+    values = {
+        "AUTH_ALLOW_MISSING_ORIGIN": "false",
+        "AUTH_RATE_LIMIT_KEY_SECRET": (
+            "production-test-rate-limit-secret-0001"
+        ),
+        "CELERY_BROKER_URL": "redis://cache.example.test:6379/0",
+        "CELERY_RESULT_BACKEND": "redis://cache.example.test:6379/0",
+        "DATABASE_URL": (
+            "postgresql+asyncpg://test-user:test-password@db.example.test/app"
+        ),
+        "DEBUG": "false",
+        "EMAIL_FROM": "no-reply@example.test",
+        "EMAIL_HOST": "smtp.example.test",
+        "EMAIL_PASSWORD": "test-email-password",
+        "EMAIL_PORT": "587",
+        "EMAIL_USERNAME": "test-email-user",
+        "EMAIL_USE_TLS": "true",
+        "ENVIRONMENT": "production",
+        "FRONTEND_ORIGIN": "https://app.example.test",
+        "REDIS_URL": "redis://cache.example.test:6379/0",
+        "SESSION_COOKIE_NAME": "amp_session",
+    }
+    for name, value in values.items():
+        monkeypatch.setenv(name, value)
+    return values
+
+
 @pytest.fixture(autouse=True)
 def isolate_auth_rate_limits():
     store = AllowAllRateLimitStore()

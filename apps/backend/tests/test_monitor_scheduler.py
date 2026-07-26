@@ -3,8 +3,6 @@ from datetime import datetime, timedelta, timezone
 import logging
 import os
 import time
-from uuid import UUID
-
 import pytest
 from sqlalchemy import select, text
 from sqlalchemy.engine import make_url

@@ -79,7 +79,7 @@ services:
   frontend:
     build:
       context: ./apps/web
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.dev
     restart: unless-stopped
     depends_on:
       backend:

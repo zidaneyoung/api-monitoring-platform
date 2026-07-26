@@ -1,0 +1,66 @@
+x-production-environment: &production-environment
+  ENVIRONMENT: production
+  DEBUG: "false"
+  FRONTEND_ORIGIN: https://frontend.example.invalid
+  SESSION_COOKIE_NAME: amp_migration_test_session
+  AUTH_ALLOW_MISSING_ORIGIN: "false"
+  AUTH_RATE_LIMIT_KEY_SECRET: migration-test-rate-limit-secret-0001
+  DATABASE_URL: postgresql+asyncpg://migration_test:migration-only@db:5432/api_monitoring_migration_test
+  REDIS_URL: redis://redis.example.invalid:6379/0
+  CELERY_BROKER_URL: redis://redis.example.invalid:6379/0
+  CELERY_RESULT_BACKEND: redis://redis.example.invalid:6379/0
+  EMAIL_HOST: smtp.example.invalid
+  EMAIL_PORT: "587"
+  EMAIL_USERNAME: migration-test
+  EMAIL_PASSWORD: migration-test-only
+  EMAIL_FROM: no-reply@example.invalid
+  EMAIL_USE_TLS: "true"
+
+services:
+  db:
+    image: postgres:16.4-alpine
+    restart: "no"
+    environment:
+      POSTGRES_DB: api_monitoring_migration_test
+      POSTGRES_USER: migration_test
+      POSTGRES_PASSWORD: migration-only
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U migration_test -d api_monitoring_migration_test
+      interval: 2s
+      timeout: 3s
+      retries: 20
+      start_period: 3s
+    tmpfs:
+      - /var/lib/postgresql/data
+
+  migrate:
+    build:
+      context: ./apps/backend
+      dockerfile: Dockerfile
+    image: api-monitoring-production-migration-tests-backend
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment: *production-environment
+    command: [python, -m, app.production_migrations, upgrade]
+
+  tests:
+    build:
+      context: ./apps/backend
+      dockerfile: Dockerfile.test
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      <<: *production-environment
+      TEST_DATABASE_URL: postgresql+asyncpg://migration_test:migration-only@db:5432/api_monitoring_migration_test
+    command:
+      - python
+      - -m
+      - pytest
+      - -q
+      - tests/test_production_migrations.py

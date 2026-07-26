@@ -1,0 +1,223 @@
+name: Build images
+
+on:
+  workflow_run:
+    workflows:
+      - Tests
+    types:
+      - completed
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish to the configured container registry
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-images-${{ github.event.workflow_run.head_sha || github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build production images
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_branch == 'main'
+      )
+    runs-on: ubuntu-latest
+    env:
+      SOURCE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+    steps:
+      - name: Check out validated revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Resolve publication configuration
+        id: configuration
+        env:
+          AUTO_PUBLISH: ${{ vars.PUBLISH_CONTAINER_IMAGES }}
+          MANUAL_PUBLISH: ${{ inputs.publish }}
+          PUBLIC_API_URL: ${{ vars.PRODUCTION_PUBLIC_API_URL }}
+          REGISTRY: ${{ vars.CONTAINER_REGISTRY }}
+          REGISTRY_NAMESPACE: ${{ vars.CONTAINER_IMAGE_NAMESPACE }}
+          REGISTRY_PASSWORD: ${{ secrets.CONTAINER_REGISTRY_PASSWORD }}
+          REGISTRY_USERNAME: ${{ secrets.CONTAINER_REGISTRY_USERNAME }}
+        shell: bash
+        run: |
+          publish=false
+          if [[ "$AUTO_PUBLISH" == "true" || "$MANUAL_PUBLISH" == "true" ]]; then
+            publish=true
+          fi
+
+          if [[ "$publish" == "true" ]]; then
+            if [[ -z "$REGISTRY" || -z "$REGISTRY_NAMESPACE" ]]; then
+              echo "::error::Container registry variables are not configured."
+              exit 1
+            fi
+            if [[ -z "$REGISTRY_USERNAME" || -z "$REGISTRY_PASSWORD" ]]; then
+              echo "::error::Container registry secrets are not configured."
+              exit 1
+            fi
+            if [[ -z "$PUBLIC_API_URL" ]]; then
+              echo "::error::PRODUCTION_PUBLIC_API_URL is required for publication."
+              exit 1
+            fi
+          fi
+
+          api_url="${PUBLIC_API_URL:-https://api.example.invalid}"
+          {
+            echo "publish=$publish"
+            echo "api_url=$api_url"
+            echo "registry=$REGISTRY"
+            echo "namespace=$REGISTRY_NAMESPACE"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+
+      - name: Build frontend image
+        id: frontend
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
+        with:
+          context: apps/web
+          load: true
+          push: false
+          provenance: false
+          tags: api-monitoring-frontend:${{ env.SOURCE_SHA }}
+          build-args: |
+            NEXT_PUBLIC_API_BASE_URL=${{ steps.configuration.outputs.api_url }}
+          labels: |
+            org.opencontainers.image.revision=${{ env.SOURCE_SHA }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
+
+      - name: Build backend image
+        id: backend
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
+        with:
+          context: apps/backend
+          load: true
+          push: false
+          provenance: false
+          tags: api-monitoring-backend:${{ env.SOURCE_SHA }}
+          labels: |
+            org.opencontainers.image.revision=${{ env.SOURCE_SHA }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
+
+      - name: Verify shared backend entrypoints
+        shell: bash
+        run: |
+          docker run --rm --entrypoint sh \
+            "api-monitoring-backend:$SOURCE_SHA" \
+            -c 'test "$(id -u)" = "10001" && command -v celery >/dev/null'
+          docker run --rm --entrypoint celery \
+            "api-monitoring-backend:$SOURCE_SHA" \
+            -A app.celery_app:celery_app --version
+
+      - name: Record build metadata
+        shell: bash
+        env:
+          BACKEND_DIGEST: ${{ steps.backend.outputs.digest }}
+          FRONTEND_DIGEST: ${{ steps.frontend.outputs.digest }}
+        run: |
+          {
+            echo "## Production image build"
+            echo
+            echo "- Revision: \`$SOURCE_SHA\`"
+            echo "- Frontend digest: \`$FRONTEND_DIGEST\`"
+            echo "- Backend digest: \`$BACKEND_DIGEST\`"
+            echo "- Publication requested: \`${{ steps.configuration.outputs.publish }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Log in to configured registry
+        if: steps.configuration.outputs.publish == 'true'
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: ${{ steps.configuration.outputs.registry }}
+          username: ${{ secrets.CONTAINER_REGISTRY_USERNAME }}
+          password: ${{ secrets.CONTAINER_REGISTRY_PASSWORD }}
+
+      - name: Publish immutable image tags
+        if: steps.configuration.outputs.publish == 'true'
+        env:
+          NAMESPACE: ${{ steps.configuration.outputs.namespace }}
+          REGISTRY: ${{ steps.configuration.outputs.registry }}
+        shell: bash
+        run: |
+          frontend_ref="$REGISTRY/$NAMESPACE/api-monitoring-frontend:$SOURCE_SHA"
+          backend_ref="$REGISTRY/$NAMESPACE/api-monitoring-backend:$SOURCE_SHA"
+          docker tag "api-monitoring-frontend:$SOURCE_SHA" "$frontend_ref"
+          docker tag "api-monitoring-backend:$SOURCE_SHA" "$backend_ref"
+          docker push "$frontend_ref"
+          docker push "$backend_ref"
+
+      - name: Pull and start published images
+        if: steps.configuration.outputs.publish == 'true'
+        env:
+          NAMESPACE: ${{ steps.configuration.outputs.namespace }}
+          REGISTRY: ${{ steps.configuration.outputs.registry }}
+        shell: bash
+        run: |
+          frontend_ref="$REGISTRY/$NAMESPACE/api-monitoring-frontend:$SOURCE_SHA"
+          backend_ref="$REGISTRY/$NAMESPACE/api-monitoring-backend:$SOURCE_SHA"
+
+          cleanup() {
+            docker rm --force published-frontend-check published-backend-check \
+              >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          docker image rm "$frontend_ref" "$backend_ref"
+          docker pull "$frontend_ref"
+          docker pull "$backend_ref"
+
+          docker run --detach --name published-backend-check \
+            --publish 127.0.0.1:18800:8000 \
+            --env ENVIRONMENT=production \
+            --env FRONTEND_ORIGIN=https://frontend.example.invalid \
+            --env SESSION_COOKIE_NAME=amp_session \
+            --env AUTH_RATE_LIMIT_KEY_SECRET=registry-validation-only-rate-limit-secret \
+            --env DATABASE_URL=postgresql+asyncpg://validation:validation@db.invalid/validation \
+            --env REDIS_URL=redis://redis.invalid:6379/0 \
+            --env CELERY_BROKER_URL=redis://redis.invalid:6379/0 \
+            --env CELERY_RESULT_BACKEND=redis://redis.invalid:6379/0 \
+            --env EMAIL_HOST=smtp.example.invalid \
+            --env EMAIL_PORT=587 \
+            --env EMAIL_USERNAME=registry-validation \
+            --env EMAIL_PASSWORD=registry-validation \
+            --env EMAIL_FROM=no-reply@example.invalid \
+            --env EMAIL_USE_TLS=true \
+            "$backend_ref"
+          docker run --detach --name published-frontend-check \
+            --publish 127.0.0.1:13300:3000 \
+            --env INTERNAL_API_BASE_URL=http://127.0.0.1:18800 \
+            --env SESSION_COOKIE_NAME=amp_session \
+            "$frontend_ref"
+
+          for container in published-backend-check published-frontend-check; do
+            healthy=false
+            for _ in {1..60}; do
+              if [[ "$(docker inspect --format '{{.State.Health.Status}}' "$container")" == "healthy" ]]; then
+                healthy=true
+                break
+              fi
+              sleep 1
+            done
+            if [[ "$healthy" != "true" ]]; then
+              docker logs "$container"
+              exit 1
+            fi
+          done
